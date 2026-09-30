@@ -1,0 +1,29 @@
+{
+  "name": "agent-disk-guard",
+  "version": "0.2.0",
+  "description": "Prevents AI coding agents from filling up drive C: — intercepts file writes and shell commands via PreToolUse hooks, redirects package caches to a configurable drive (e.g. D:\\AgentCache), injects environment variables, migrates existing directories with robocopy+junction, and monitors free disk space. Works with Claude Code, ZCode, DeepSeek Harness and other Claude Code-compatible agent harnesses.",
+  "author": {
+    "name": "luo173176",
+    "url": "https://github.com/luo173176"
+  },
+  "homepage": "https://github.com/luo173176/agent-disk-guard",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luo173176/agent-disk-guard"
+  },
+  "license": "MIT",
+  "keywords": [
+    "ai-agent",
+    "hooks",
+    "disk-space",
+    "npm-cache",
+    "pip-cache",
+    "junction",
+    "windows",
+    "claude-code",
+    "deepseek"
+  ],
+  "hooks": "./hooks/hooks.json",
+  "commands": "./commands",
+  "skills": "./skills"
+}

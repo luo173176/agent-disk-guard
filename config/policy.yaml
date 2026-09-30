@@ -1,0 +1,106 @@
+# ============================================================================
+# AgentDiskGuard 策略文件
+# ---------------------------------------------------------------------------
+# 解析顺序：环境变量 AGENTDISKGUARD_POLICY > %USERPROFILE%\.agent-disk-guard\policy.yaml
+#           > 插件自带 config\policy.yaml（本文件，只读兜底）
+# 想自定义：把本文件复制到 %USERPROFILE%\.agent-disk-guard\policy.yaml 后编辑。
+# 本文件只使用 YAML 子集（映射/列表/标量/注释），解析器零依赖实现。
+# 路径支持 %USERPROFILE% / %LOCALAPPDATA% / %APPDATA% 等环境变量展开。
+# ============================================================================
+
+version: 1
+
+# 受保护盘符
+protectedDrive: "C:"
+
+# 缓存/依赖重定向根目录（必须不在受保护盘上）
+redirectRoot: "D:\\AgentCache"
+
+# 写文件处理: redirect=自动改写到 D 盘 | deny=拒绝 | ask=询问用户 | off=不检查
+fileWriteMode: redirect
+
+# 命令处理: rewrite=注入缓存参数 | deny=拒绝 | ask=询问 | off=不检查
+commandMode: rewrite
+
+# 内部错误时放行（fail-open），保证 Hook 永不拖死 Agent。设为 false 则错误时拒绝执行
+failOpen: true
+
+# ----------------------------------------------------------------------------
+# C 盘受保护路径：命中即处理（单条 mode 优先于全局 fileWriteMode）。
+#   redirect 子目录名 = 迁移/重定向到 redirectRoot 下的位置；省略则用 mirror 模式。
+#   mode: deny 用于系统目录 —— 无论全局模式如何都拒绝写入。
+#   注意：目录一旦被迁移成 Junction（数据实际已在 D 盘），守卫会自动放行。
+# ----------------------------------------------------------------------------
+protectedPaths:
+  - path: "%LOCALAPPDATA%\\Temp"
+    redirect: "temp"
+  - path: "%LOCALAPPDATA%\\npm-cache"
+    redirect: "npm-cache"
+  - path: "%APPDATA%\\npm-cache"
+    redirect: "npm-cache"
+  - path: "%USERPROFILE%\\.npm"
+    redirect: "npm"
+  - path: "%USERPROFILE%\\.cache"
+    redirect: "xdg-cache"
+  - path: "%LOCALAPPDATA%\\pip\\Cache"
+    redirect: "pip"
+  - path: "%USERPROFILE%\\.cargo"
+    redirect: "cargo"
+  - path: "%USERPROFILE%\\.rustup"
+    redirect: "rustup"
+  - path: "%USERPROFILE%\\.gradle"
+    redirect: "gradle"
+  - path: "%USERPROFILE%\\.m2"
+    redirect: "m2"
+  - path: "%USERPROFILE%\\.docker"
+    redirect: "docker"
+  - path: "%USERPROFILE%\\.codex"
+    redirect: "codex"
+  - path: "%USERPROFILE%\\.ollama"
+    redirect: "ollama"
+  - path: "%USERPROFILE%\\.conda"
+    redirect: "conda"
+  - path: "%USERPROFILE%\\.nuget"
+    redirect: "nuget"
+  - path: "%USERPROFILE%\\.huggingface"
+    redirect: "huggingface"
+  - path: "%USERPROFILE%\\node_modules"
+    redirect: "node_modules"
+  # 系统目录：一律拒绝写入（mode: deny），migrate 命令对它们也有硬编码黑名单
+  - path: "C:\\Windows"
+    mode: deny
+  - path: "C:\\Program Files"
+    mode: deny
+  - path: "C:\\Program Files (x86)"
+    mode: deny
+  - path: "C:\\ProgramData"
+    mode: deny
+
+# ----------------------------------------------------------------------------
+# 白名单：命中这些路径（前缀匹配）的 C 盘写入一律放行。
+# ----------------------------------------------------------------------------
+whitelist:
+  - "%USERPROFILE%\\.agent-disk-guard"
+
+# ----------------------------------------------------------------------------
+# 命令规则：按顺序匹配第一条命中的规则；action ∈ deny|ask|allow（正则，忽略大小写）。
+# ----------------------------------------------------------------------------
+commandRules:
+  - pattern: "\\bformat\\s+[cC]:"
+    action: deny
+    reason: "禁止格式化系统盘"
+  - pattern: "\\b(rd|rmdir|del|erase|Remove-Item|rm)\\b[^&|;]{0,160}\\s+C:\\\\Windows\\b"
+    action: deny
+    reason: "禁止删除 C:\\Windows 内容"
+  - pattern: "\\bdiskpart\\b"
+    action: deny
+    reason: "禁止在 Agent 会话中使用 diskpart"
+
+# ----------------------------------------------------------------------------
+# 磁盘监控
+# ----------------------------------------------------------------------------
+monitor:
+  enabled: true
+  warnGB: 20
+  criticalGB: 10
+  sessionStartCheck: true

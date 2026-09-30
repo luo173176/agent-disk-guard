@@ -1,0 +1,16 @@
+{
+  "name": "agent-disk-guard",
+  "owner": {
+    "name": "luo173176",
+    "url": "https://github.com/luo173176"
+  },
+  "plugins": [
+    {
+      "name": "agent-disk-guard",
+      "source": "./",
+      "version": "0.2.0",
+      "description": "Prevents AI coding agents from filling up drive C: — PreToolUse hook interception, cache redirection, env injection, robocopy+junction migration, disk monitoring with rollback.",
+      "category": "developer-tools"
+    }
+  ]
+}
