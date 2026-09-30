@@ -33,7 +33,8 @@ function main(): void {
   if (decision.action !== "allow" || decision.updatedInput) {
     logInfo("hook 决策", { tool: call.toolName, action: decision.action, reason: decision.reason });
   }
-  process.stdout.write(JSON.stringify(decisionToPreToolUseOutput(decision)));
+  // stdout 接的是宿主的管道，process.exit 可能截断异步写 —— 必须同步写
+  require("fs").writeSync(1, JSON.stringify(decisionToPreToolUseOutput(decision)));
   process.exit(0);
 }
 
@@ -45,7 +46,8 @@ try {
   try {
     const policy = loadPolicy();
     if (!policy.failOpen) {
-      process.stdout.write(
+      require("fs").writeSync(
+        1,
         JSON.stringify({
           hookSpecificOutput: {
             hookEventName: "PreToolUse",

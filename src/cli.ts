@@ -256,7 +256,7 @@ function cmdMonitor(args: string[]): number {
   const timer = setInterval(tick, Math.max(1, intervalMin) * 60 * 1000);
   const stop = (): void => {
     clearInterval(timer);
-    process.exit(0);
+    process.exitCode = 0; // 清掉定时器后事件循环自然排空退出，避免截断输出
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
@@ -354,9 +354,9 @@ export function main(argv: string[]): number {
   }
 }
 
-// 直接运行 dist/cli.js 时执行
+// 直接运行 dist/cli.js 时执行（exitCode 而非 exit：给 stdout 管道留出刷写时间）
 if (require.main === module) {
   const code = main(process.argv.slice(2));
   logInfo("cli 退出", { code });
-  process.exit(code);
+  process.exitCode = code;
 }

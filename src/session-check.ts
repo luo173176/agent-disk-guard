@@ -39,7 +39,8 @@ function main(): void {
       lines.push(...cleanupAdvice(cands.slice(0, 5)));
     }
   }
-  process.stdout.write(JSON.stringify(additionalContextOutput(lines.join("\n"))));
+  // stdout 接的是宿主管道，process.exit 可能截断异步写 —— 必须同步写
+  require("fs").writeSync(1, JSON.stringify(additionalContextOutput(lines.join("\n"))));
   process.exit(0);
 }
 
