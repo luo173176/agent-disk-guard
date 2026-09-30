@@ -119,10 +119,17 @@ test("NotebookEdit 检查 notebook_path", () => {
 // ---------------------------------------------------------------------------
 
 test("场景1：npm install 被注入 --cache 指向 D 盘", () => {
-  const policy = makePolicy();
-  const d = evaluateToolCall("Bash", { command: "npm install lodash" }, policy);
-  assert.equal(d.action, "allow");
-  assert.equal(d.updatedInput.command, `npm install lodash --cache "${P("D:", "AgentCache", "npm-cache")}"`);
+  // 用户已运行 install.ps1 时 npm test 会注入 npm_config_cache，需清掉才能测注入路径
+  const saved = process.env.npm_config_cache;
+  delete process.env.npm_config_cache;
+  try {
+    const policy = makePolicy();
+    const d = evaluateToolCall("Bash", { command: "npm install lodash" }, policy);
+    assert.equal(d.action, "allow");
+    assert.equal(d.updatedInput.command, `npm install lodash --cache "${P("D:", "AgentCache", "npm-cache")}"`);
+  } finally {
+    if (saved !== undefined) process.env.npm_config_cache = saved;
+  }
 });
 
 test("pip install 注入 --cache-dir（含多段命令）", () => {

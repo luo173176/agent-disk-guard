@@ -48,6 +48,7 @@ const env = {
   AGENTDISKGUARD_DATA_DIR: tmpData,
   AGENTDISKGUARD_JOURNAL: path.join(tmpData, "journal.jsonl"),
 };
+delete env.npm_config_cache; // 用户初始化后 npm test 会注入该变量，清掉以测注入路径
 
 function runHook(payload, stdin = JSON.stringify(payload)) {
   const r = spawnSync("node", [HOOK], { input: stdin, encoding: "utf8", timeout: 20000, env });
