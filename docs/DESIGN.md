@@ -100,19 +100,23 @@ stdin ──► JSON.parse ──► normalizeHookInput ──► loadPolicy(缓
 ## 4. 路径重定向算法（pathguard.ts）
 
 ```
-输入 target ──规范化(统一 \ 、压重、留大小写)──► p
-1. driveOf(p) ≠ 受保护盘符          → 放行（D/E 盘随便写）
-2. 命中 whitelist 前缀              → 放行（如守卫自身数据目录）
-3. 命中 protectedPaths 前缀:
-     pp.path 是 reparse point?      → 放行 ← Junction 放行：数据已物理在 D 盘,
-     │                                      再拦会把用户锁死在已迁移目录
+输入 target ──展开 %VAR% → 相对路径 resolve → 规范化(剥 \\?\ 前缀、UNC 本机映射、折叠 . 与 ..)──► p
+1. 命中 whitelist 前缀              → 放行（如守卫自身数据目录）
+2. 命中 protectedPaths 前缀（按条目自带盘符判断，不看全局 protectedDrive）:
+     pp.path 是 reparse point 且指向别的盘? → 放行 ← Junction 放行：数据已物理在 D 盘,
+     │                                              再拦会把用户锁死在已迁移目录
      ▼
    redirect 子目录名?
      ├─ 有: <root>\<redirect>\<相对 pp.path 的子路径>
      └─ 无: <root>\mirror\home\<相对用户主目录>   (盘根场景: mirror\driveC\…)
-4. 未命中但直接落在 C:\ 盘根          → 拦（防 Agent 往盘根塞文件）
-5. 其余 C 盘路径（项目目录等）        → 放行（低误报原则：项目工作不受干扰）
+3. 以上都没命中，但路径经 realpath 解析后（覆盖 8.3 短名 C:\PROGRA~1\…、符号链接）
+   会落进某个受保护目录          → 按该条目的规则处理，并在 reason 里说明解析来源
+4. 未命中但直接落在受保护盘根      → 拦（防 Agent 往盘根塞文件）
+5. 其余路径（项目目录、非保护盘）  → 放行（低误报原则：项目工作不受干扰）
 ```
+
+> `protectedDrive` 只是 `protectDrive:` 策略项 / 盘根判定用的展示值；保护范围由 `protectedPaths`
+> 每条的绝对路径决定，改盘符不会让 `C:\Windows` 这类条目失效。
 
 ## 5. 命令改写算法（rewriters.ts）
 
@@ -160,7 +164,7 @@ journal 每步落盘（JSONL，追加式），记录 source/dest/backupPath/stat
 | Hook 冷启动（node + 读策略 + 决策） | ~80-120ms（超时上限 5s，远低于正常值） |
 | 路径命中受保护目录时 | +1 次 `lstat`（junction 探测，~0.1ms） |
 | 命令改写 | 纯字符串/正则，<1ms |
-| SessionStart 巡检 | 1 次 PowerShell CIM 查询，200-500ms，每会话一次 |
+| SessionStart 巡检 | 1 次 `fs.statfsSync`（<1ms）；仅在 Node <18.15 或 statfs 不可用时回落 PowerShell CIM（200-500ms），每会话一次 |
 | 放行路径的输出 | 空（零字节），由退出码语义放行 |
 
 fail-open 兜底：任何异常 → 空输出 + exit 0，Agent 流程不受影响（可配 `failOpen: false` 改为拒绝）。
@@ -170,7 +174,7 @@ fail-open 兜底：任何异常 → 空输出 + exit 0，Agent 流程不受影�
 - Docker 镜像层在 WSL2 vhdx 内，本工具只能改客户端配置目录；
 - Hook 无法为子进程注入环境变量（进程模型限制），环境变量由 install.ps1 持久化或 `exec` 包装器临时注入；
 - 正则规则有误杀可能，故内置规则最少化（format/diskpart/删 Windows），其余交给用户按需添加；
-- 迁移期间目录被占用会失败：robocopy 阶段失败 → 未修改源；mklink 阶段失败 → 自动改名恢复原目录。
+- 迁移期间目录被占用会失败：robocopy 阶段失败 → 未修改源；mklink 阶段失败 → 尝试改名恢复原目录，恢复本身失败时会如实报出备份路径与手工恢复命令（不谎报"已恢复"）；
 
 ## 10. 扩展点
 

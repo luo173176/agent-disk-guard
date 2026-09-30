@@ -182,36 +182,56 @@ function executeMigration(plan, confirm) {
         return { ok: false, message: "危险操作需二次确认：加 --yes 才会真正执行。请先检查 dry-run 计划。", plan };
     }
     const { source, dest, backupPath } = plan;
+    // 失败时用来告诉用户"卡在哪一步、源目录现在叫什么"，而不是笼统一句"已尽力保持原状"
+    let phase = "准备目标目录";
     try {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         // 1) robocopy 复制（0-7 成功）
+        phase = "复制数据到目标盘";
         const rc = (0, util_1.execSync)("robocopy.exe", [source, dest, "/E", "/COPY:DAT", "/DCOPY:DAT", "/R:1", "/W:1", "/NFL", "/NDL", "/NP", "/MT:8"], { timeoutMs: 30 * 60 * 1000 });
         if (rc.status == null || rc.status >= 8) {
             (0, journal_1.appendEntry)({ id: `${Date.now()}-f`, op: "migrate", time: new Date().toISOString(), source, dest, junction: source, backupPath: null, status: "failed", note: `robocopy 退出码 ${rc.status}` });
             return { ok: false, message: `robocopy 复制失败（退出码 ${rc.status}），未修改源目录。stderr: ${rc.stderr.slice(0, 400)}` };
         }
         // 2) 源目录改名备份（同卷原子）
+        phase = "源目录改名为备份";
         fs.renameSync(source, backupPath);
         // 3) 建 Junction
+        phase = "创建 Junction";
         const ml = (0, util_1.execSync)("cmd.exe", ["/c", "mklink", "/J", source, dest], { timeoutMs: 15000 });
         if (ml.status !== 0) {
-            // 回滚改名
-            try {
-                fs.renameSync(backupPath, source);
-            }
-            catch {
-                /* 记录但不再抛 */
-            }
-            (0, journal_1.appendEntry)({ id: `${Date.now()}-f`, op: "migrate", time: new Date().toISOString(), source, dest, junction: source, backupPath, status: "failed", note: `mklink 失败: ${ml.stdout} ${ml.stderr}` });
-            return { ok: false, message: `mklink 失败，已恢复原目录: ${ml.stdout || ml.stderr}` };
+            // Junction 没建成，而源目录此刻还叫备份名：必须改回来，否则用户目录看起来"凭空消失"。
+            const restored = tryRestore(backupPath, source);
+            (0, journal_1.appendEntry)({
+                id: `${Date.now()}-f`,
+                op: "migrate",
+                time: new Date().toISOString(),
+                source,
+                dest,
+                junction: source,
+                backupPath,
+                status: "failed",
+                note: `mklink 失败: ${ml.stdout} ${ml.stderr}; 已改名回原位=${restored}`,
+            });
+            const detail = (ml.stdout || ml.stderr).slice(0, 400);
+            return {
+                ok: false,
+                message: restored
+                    ? `mklink 失败，已恢复原目录: ${detail}`
+                    : `mklink 失败，且原目录未能自动改回原位，请手动执行：ren "${backupPath}" "${path.basename(source)}"。原因: ${detail}`,
+            };
         }
         // 4) 验证 Junction 可读
+        phase = "验证 Junction";
         try {
             fs.readdirSync(source);
         }
         catch (e) {
             (0, journal_1.appendEntry)({ id: `${Date.now()}-f`, op: "migrate", time: new Date().toISOString(), source, dest, junction: source, backupPath, status: "failed", note: `验证失败 ${String(e)}` });
-            return { ok: false, message: `Junction 创建后验证失败，请检查: ${String(e)}` };
+            return {
+                ok: false,
+                message: `Junction 创建后验证失败（数据已复制到 ${dest}，原始备份仍在 ${backupPath}），请人工检查: ${String(e)}`,
+            };
         }
         const entry = {
             id: `${Date.now()}-m`,
@@ -228,14 +248,38 @@ function executeMigration(plan, confirm) {
         return { ok: true, message: `迁移完成：${source} → ${dest}（Junction 已建，备份 ${backupPath} 已保留）`, plan };
     }
     catch (e) {
-        return { ok: false, message: `迁移失败（已尽力保持原状，请人工检查）: ${String(e)}` };
+        const where = fs.existsSync(source) ? "源目录仍在原位置" : `源目录可能已改名为 ${backupPath}`;
+        return { ok: false, message: `迁移在「${phase}」阶段失败（${where}），请人工检查: ${String(e)}` };
+    }
+}
+/** 把备份目录改回原名（仅在原名不存在、备份存在时）；成功返回 true。 */
+function tryRestore(backupPath, source) {
+    try {
+        if (fs.existsSync(source) || !fs.existsSync(backupPath))
+            return false;
+        fs.renameSync(backupPath, source);
+        return true;
+    }
+    catch {
+        return false;
     }
 }
 /** 删除迁移备份（二次确认）。 */
 function purgeBackup(source, confirm) {
-    const state = (0, journal_1.latestStateFor)(source);
     const src = (0, util_1.normalizePath)(source);
-    const backup = state?.backupPath ?? `${src}.adg-bak`;
+    const state = (0, journal_1.latestStateFor)(src);
+    const backup = (0, util_1.normalizePath)(state?.backupPath ?? `${src}.adg-bak`);
+    // 安全护栏：journal 只是磁盘上的可写文本，别让它把 rmSync 引到任意路径去。
+    // 只允许删迁移约定的备份命名（"<源目录名>.adg-bak"，与源目录同级）。
+    const expected = (0, util_1.normalizePath)(`${src}.adg-bak`);
+    const expectedName = `${path.basename(src).toLowerCase()}.adg-bak`;
+    const allowed = backup.toLowerCase() === expected.toLowerCase() || path.basename(backup).toLowerCase() === expectedName;
+    if (!allowed) {
+        return { ok: false, message: `拒绝删除：备份路径不符合约定（应为 "${expected}"）: ${backup}` };
+    }
+    if (backup.toLowerCase() === src.toLowerCase()) {
+        return { ok: false, message: `拒绝删除：备份路径与源目录相同: ${backup}` };
+    }
     if (!fs.existsSync(backup))
         return { ok: false, message: `备份不存在（已清理？）: ${backup}` };
     if (!confirm)
@@ -247,6 +291,26 @@ function purgeBackup(source, confirm) {
     }
     catch (e) {
         return { ok: false, message: `删除备份失败: ${String(e)}` };
+    }
+}
+/** 备份目录是否可用于回滚：存在、是目录、非空、可读。 */
+function inspectBackupDir(backupPath) {
+    let st;
+    try {
+        st = fs.statSync(backupPath);
+    }
+    catch {
+        return { exists: false, usable: false, note: "不存在" };
+    }
+    if (!st.isDirectory())
+        return { exists: true, usable: false, note: "不是目录" };
+    try {
+        return fs.readdirSync(backupPath).length > 0
+            ? { exists: true, usable: true, note: "" }
+            : { exists: true, usable: false, note: "空目录" };
+    }
+    catch (e) {
+        return { exists: true, usable: false, note: `无法读取: ${String(e)}` };
     }
 }
 /** 回滚迁移（默认 dry-run）。 */
@@ -274,11 +338,17 @@ function rollbackMigration(source, confirm, withSize = true) {
         steps.push(`rmdir "${src}"（仅拆除 Junction，不影响 ${dest} 数据）`);
     else
         warnings.push(`原路径当前不是 Junction（可能已被移动/删除）: ${src}`);
-    const backupExists = fs.existsSync(backupPath);
-    if (backupExists)
+    // 备份"存在"不等于"可用"：迁移中途失败/被手删一半时，只剩个空壳目录，
+    // 直接 rename 回去等于用一个残缺目录顶替原目录，所以这里要求它非空且可读。
+    const backup = inspectBackupDir(backupPath);
+    const canRestoreFromBackup = backup.usable;
+    if (backup.exists && !backup.usable) {
+        warnings.push(`备份目录不可用于回滚（${backup.note}）: ${backupPath}`);
+    }
+    if (canRestoreFromBackup)
         steps.push(`ren "${backupPath}" → "${src}"（恢复原目录）`);
     else
-        steps.push(`robocopy /MOVE "${dest}" → "${src}"（无备份时从 D 盘搬回）`);
+        steps.push(`robocopy /MOVE "${dest}" → "${src}"（无可用备份时从目标盘搬回）`);
     const sizeBytes = withSize && fs.existsSync(dest) ? (0, monitor_1.measureDir)(dest) : null;
     const sizeNote = sizeBytes != null ? `，约 ${(0, util_1.humanBytes)(sizeBytes)}` : "";
     warnings.unshift(`将回滚迁移${sizeNote}: ${dest} → ${src}`);
@@ -291,7 +361,7 @@ function rollbackMigration(source, confirm, withSize = true) {
             if (rd.status !== 0)
                 return { ok: false, message: `拆除 Junction 失败: ${rd.stdout || rd.stderr}` };
         }
-        if (fs.existsSync(backupPath)) {
+        if (canRestoreFromBackup) {
             fs.renameSync(backupPath, src);
         }
         else if (fs.existsSync(dest)) {
@@ -299,6 +369,13 @@ function rollbackMigration(source, confirm, withSize = true) {
             if (rc.status == null || rc.status >= 8) {
                 return { ok: false, message: `从 D 盘搬回失败（robocopy 退出码 ${rc.status}）` };
             }
+        }
+        else {
+            // 两边都没有可用数据：什么都不做比"假装回滚成功"安全
+            return {
+                ok: false,
+                message: `回滚中止：备份目录不可用（${backup.note || "不存在"}）且目标副本不存在: ${dest}`,
+            };
         }
         (0, journal_1.appendEntry)({ id: `${Date.now()}-r`, op: "rollback", time: new Date().toISOString(), source: src, dest, junction: src, backupPath: null, status: "rolled-back" });
         const destLeft = fs.existsSync(dest) ? `D 盘副本保留在 ${dest}（确认无误后可手动删除）` : "D 盘数据已搬回";

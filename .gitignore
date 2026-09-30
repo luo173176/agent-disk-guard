@@ -5,3 +5,4 @@ npm-debug.log*
 Thumbs.db
 *.tsbuildinfo
 dist/**/*.map
+.npm-cache/

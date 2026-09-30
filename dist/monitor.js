@@ -45,6 +45,8 @@ exports.measureDir = measureDir;
 exports.suggestCleanup = suggestCleanup;
 exports.cleanupAdvice = cleanupAdvice;
 const fs = __importStar(require("fs"));
+const os = __importStar(require("os"));
+const path = __importStar(require("path"));
 const util_1 = require("./util");
 const pathguard_1 = require("./pathguard");
 function classifyFree(freeBytes, policy) {
@@ -59,23 +61,14 @@ function classifyFree(freeBytes, policy) {
 }
 function checkDisk(policy, drive = policy.protectedDrive) {
     const letter = drive.replace(/[:\\]/g, "").toUpperCase();
-    const free = (0, util_1.getDriveFreeBytes)(`${letter}:`);
-    let total = null;
-    if (free != null) {
-        const r = (0, util_1.execSync)("powershell.exe", [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            `(Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='${letter}:'").Size`,
-        ], { timeoutMs: 15000 });
-        const n = parseInt(r.stdout.trim(), 10);
-        total = Number.isFinite(n) ? n : null;
-    }
+    // 一次拿到 free + total：优先 statfs（不依赖子进程，受限令牌/低完整性环境下同样可用），
+    // 失败才回落 WMI。旧实现固定走两次 PowerShell，在受限环境里必然两个都 null → 恒为 unknown。
+    const space = (0, util_1.getDriveSpace)(`${letter}:`);
     return {
         drive: `${letter}:`,
-        freeBytes: free,
-        totalBytes: total,
-        level: classifyFree(free, policy),
+        freeBytes: space.freeBytes,
+        totalBytes: space.totalBytes,
+        level: classifyFree(space.freeBytes, policy),
         warnGB: policy.monitor.warnGB,
         criticalGB: policy.monitor.criticalGB,
     };
@@ -89,7 +82,16 @@ function statusLine(s) {
 }
 /** 用 robocopy /L（仅列出）统计目录字节量，比 PowerShell 遍历快一个量级；失败返回 null。 */
 function measureDir(dir, timeoutMs = 60000) {
-    const r = (0, util_1.execSync)("robocopy.exe", [dir, "\\\\localhost\\c$\\__adg_empty__", "/L", "/E", "/NJH", "/BYTES", "/NDL", "/NFL", "/NP", "/R:0", "/W:0"], { timeoutMs });
+    // /L 只列出不写盘，目标只要是个"另一个目录"即可：用本机临时目录当占位，
+    // 免得依赖 \\localhost\c$（需要管理员权限，且很多环境已禁用管理共享）。
+    const scratch = path.join(os.tmpdir(), "adg-empty");
+    try {
+        fs.mkdirSync(scratch, { recursive: true });
+    }
+    catch {
+        /* 建不出来就让 robocopy 自己报错，由退出码兜底 */
+    }
+    const r = (0, util_1.execSync)("robocopy.exe", [dir, scratch, "/L", "/E", "/NJH", "/BYTES", "/NDL", "/NFL", "/NP", "/R:0", "/W:0"], { timeoutMs });
     // robocopy 退出码 0-7 都算正常（0 = 无文件）
     if (r.status == null || r.status >= 8)
         return null;

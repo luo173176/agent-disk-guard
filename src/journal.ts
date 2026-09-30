@@ -51,9 +51,15 @@ export function readEntries(): JournalEntry[] {
   return out;
 }
 
-/** 查找某条目之后该路径链上的最新状态（迁移→回滚→清理）。 */
+/**
+ * 查找某路径链上的最新**结构性**状态（迁移 / 回滚）。
+ *
+ * 注意：`purge-backup`（清理备份）不是结构变更，必须跳过——否则清理过备份之后
+ * `latestStateFor` 会返回 purge 条目，让"该目录已迁移过"的历史凭空消失，回滚无从判断。
+ * 备份是否还在，由调用方按 backupPath 自行探测。
+ */
 export function latestStateFor(source: string): JournalEntry | undefined {
   const key = source.toLowerCase();
-  const hits = readEntries().filter((e) => e.source.toLowerCase() === key);
+  const hits = readEntries().filter((e) => e.source.toLowerCase() === key && e.op !== "purge-backup");
   return hits[hits.length - 1];
 }

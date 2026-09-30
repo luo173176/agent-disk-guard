@@ -19,6 +19,7 @@ function normalizeHookInput(payload) {
     const toolName = firstString(p.tool_name) ??
         firstString(p.toolName) ??
         firstString(p.tool) ??
+        toolNameOf(p.tool) ??
         null;
     if (!toolName)
         return null;
@@ -38,6 +39,13 @@ function normalizeHookInput(payload) {
 }
 function firstString(v) {
     return typeof v === "string" && v.trim() ? v : null;
+}
+/** 工具名也可能是对象形式：{ tool: { name: "pwsh" } } / { tool: { toolName: "write" } }。 */
+function toolNameOf(v) {
+    if (!v || typeof v !== "object")
+        return null;
+    const o = v;
+    return firstString(o.name) ?? firstString(o.toolName) ?? firstString(o.tool_name);
 }
 /** 决策 → PreToolUse 输出 JSON（与 ZCode 运行时 schema 严格一致，多余键会导致校验失败）。 */
 function decisionToPreToolUseOutput(decision) {

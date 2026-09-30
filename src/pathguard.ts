@@ -5,7 +5,8 @@
  * 必须放行，否则会把用户锁死在已迁移的目录上。
  */
 import * as fs from "fs";
-import { driveLetter, driveOf, isPathUnder, normalizePath } from "./util";
+import * as path from "path";
+import { driveLetter, driveOf, expandEnv, isPathUnder, localizeUnc, normalizePath, realResolve, reparseTarget } from "./util";
 import type { Policy, ProtectedPath } from "./policy";
 
 export interface PathCheckResult {
@@ -61,45 +62,61 @@ export function computeRedirectPath(target: string, matched: ProtectedPath, redi
 
 /**
  * 检查一个写入路径。
- *  - 不在受保护盘 → 放行
  *  - 命中白名单前缀 → 放行
- *  - 命中受保护目录，但该目录已是 junction（数据实际在 D 盘）→ 放行
+ *  - 命中受保护目录，但该目录已是 junction 且目标不在受保护盘（数据实际在别处）→ 放行
  *  - 命中受保护目录 → protected=true 并给出 redirectPath
- *  - 在受保护盘但不匹配任何目录（如 C:\ 任意位置写文件）：仅当路径在盘根/系统目录之外且
- *    policy.fileWriteMode=off 时不拦；默认策略只拦 protectedPaths 命中项，
- *    对受保护盘上“直接落在盘根的散文件”（如 C:\foo.txt）也拦截，防止 Agent 往 C:\ 塞垃圾。
+ *  - 落在受保护盘根（C:\foo.txt）→ 同样拦截，防止 Agent 往 C:\ 塞垃圾
+ *
+ * 判定前会先展开环境变量、把相对路径按 cwd 解析、折叠 `..`、剥掉 `\\?\`/`\\.\` 前缀、
+ * 把本机 UNC（\\localhost\c$\x）映射回盘符路径；直判不保护时再用 realpath 复核一次，
+ * 以覆盖 8.3 短名（C:\PROGRA~1\...）与指向受保护目录的软链接。
  */
 export function checkPath(target: string, policy: Policy): PathCheckResult {
-  const p = normalizePath(target);
-  if (!p) return { protected: false };
+  const raw = expandEnv(String(target ?? "")).trim();
+  if (!raw) return { protected: false };
 
-  // 只关心受保护盘上的路径
-  const drive = driveOf(p);
-  if (!drive || drive !== driveLetter(policy.protectedDrive)) {
-    return { protected: false };
+  const abs = path.isAbsolute(raw) ? raw : path.resolve(raw);
+  const direct = judgePath(abs, policy);
+  if (direct.protected) return direct;
+
+  const real = realResolve(abs);
+  if (real && normalizePath(real).toLowerCase() !== normalizePath(abs).toLowerCase()) {
+    const viaReal = judgePath(real, policy);
+    if (viaReal.protected) {
+      return { ...viaReal, reason: `${viaReal.reason}（经短名/链接解析自 "${abs}"）` };
+    }
   }
+  return { protected: false };
+}
+
+/** 单次纯字符串判定（不做 realpath 复核），供 checkPath 与其二次复核共用。 */
+function judgePath(target: string, policy: Policy): PathCheckResult {
+  const p = localizeUnc(target);
+  if (!p) return { protected: false };
+  const protectDrive = driveLetter(policy.protectedDrive);
 
   // 白名单优先
   for (const w of policy.whitelist) {
     if (isPathUnder(p, w)) return { protected: false };
   }
 
-  // 命中受保护目录
+  // 命中受保护目录（条目自带盘符，因此策略把保护盘改成别的盘时旧条目依然有效）
   for (const pp of policy.protectedPaths) {
-    if (isPathUnder(p, pp.path)) {
-      // 已迁移成 junction → 实际写入在 D 盘 → 放行
-      if (isReparsePoint(pp.path)) return { protected: false };
-      return {
-        protected: true,
-        matched: pp,
-        redirectPath: computeRedirectPath(p, pp, policy.redirectRoot),
-        reason: `"${p}" 位于受保护目录 ${pp.path}（${policy.protectedDrive}: 盘）`,
-      };
-    }
+    if (!isPathUnder(p, pp.path)) continue;
+    // 已迁移成 junction 且目标不在受保护盘 → 实际写入不在该盘 → 放行
+    const link = reparseTarget(pp.path);
+    const linkDrive = link ? driveOf(link) : null;
+    if (linkDrive && linkDrive !== protectDrive) return { protected: false };
+    return {
+      protected: true,
+      matched: pp,
+      redirectPath: computeRedirectPath(p, pp, policy.redirectRoot),
+      reason: `"${p}" 位于受保护目录 ${pp.path}（${policy.protectedDrive}: 盘）`,
+    };
   }
 
   // 盘根散文件（C:\xxx）也拦，避免 Agent 直接往 C 盘根写东西
-  const rootOfDrive = `${driveLetter(policy.protectedDrive).toLowerCase()}:\\`;
+  const rootOfDrive = `${protectDrive.toLowerCase()}:\\`;
   if (isPathUnder(p, rootOfDrive) && !p.slice(3).includes("\\")) {
     return {
       protected: true,

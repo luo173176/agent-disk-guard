@@ -28,16 +28,16 @@ function main(): void {
   const status = checkDisk(policy);
   logInfo("session 空间检查", { level: status.level, free: status.freeBytes, source });
 
-  if (status.level === "ok") {
-    process.exit(0); // 正常时不打扰对话
+  // 只有真的低于阈值才注入告警：ok 不打扰，
+  // unknown（查询失败，例如受限令牌下 WMI 被拒）同样保持沉默——否则每个会话都往对话里塞一条无用的失败提示。
+  if (status.level !== "warn" && status.level !== "critical") {
+    process.exit(0);
   }
   const lines = [statusLine(status)];
-  if (status.level !== "unknown") {
-    const cands = suggestCleanup(policy, false);
-    if (cands.length > 0) {
-      lines.push("AgentDiskGuard 建议迁移以下 C 盘目录（命令默认 dry-run）：");
-      lines.push(...cleanupAdvice(cands.slice(0, 5)));
-    }
+  const cands = suggestCleanup(policy, false);
+  if (cands.length > 0) {
+    lines.push("AgentDiskGuard 建议迁移以下 C 盘目录（命令默认 dry-run）：");
+    lines.push(...cleanupAdvice(cands.slice(0, 5)));
   }
   // stdout 接的是宿主管道，process.exit 可能截断异步写 —— 必须同步写
   require("fs").writeSync(1, JSON.stringify(additionalContextOutput(lines.join("\n"))));

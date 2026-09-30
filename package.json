@@ -27,6 +27,9 @@
     "hooks",
     "config",
     "bin",
+    "skills",
+    "commands",
+    "docs",
     "cordis.patch.yml",
     ".claude-plugin",
     ".zcode-plugin",
@@ -43,7 +46,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "node --test",
-    "postbuild": "node scripts/postbuild.mjs"
+    "postbuild": "node scripts/postbuild.mjs",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "ai-agent",

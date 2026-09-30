@@ -110,7 +110,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -RedirectTemp        # �
 
 1. 创建重定向根目录及全部子目录（`npm-cache`、`pip`、`cargo`、`gradle`、`m2`、`ollama\models`…）；
 2. 把默认策略复制到 `%USERPROFILE%\.agent-disk-guard\policy.yaml`（已存在不覆盖，`-ForcePolicy` 强制）；
-3. 写入用户环境变量（新开终端生效）：
+3. 写入用户环境变量（新开终端生效）。变量表由 `dist/cli.js env --format json` 生成，和守卫读到的策略（`redirectRoot`）永远同一口径：
 
    | 环境变量 | 指向 |
    |---|---|
@@ -130,9 +130,11 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -RedirectTemp        # �
    | `HF_HOME` | `<根>\huggingface` |
    | `CONDA_PKGS_DIRS` / `NUGET_PACKAGES` | `<根>\conda\pkgs` / `<根>\nuget` |
 
+   写入前，每个变量安装前的原值会记到 `%USERPROFILE%\.agent-disk-guard\env-backup.json`（只在第一次记录，幂等），卸载时据此逐项还原。
+
 4. `-InstallScheduledTask` 时注册计划任务 `AgentDiskGuard Monitor`（每 15 分钟 `monitor --once`，critical 时退出码 2）。
 
-卸载：`.\uninstall.ps1`（只移除环境变量/计划任务/策略，**绝不删除任何数据**；已迁移的 Junction 用 `rollback` 还原）。
+卸载：`.\uninstall.ps1`（按 `env-backup.json` 还原环境变量、移除计划任务；策略与数据**默认保留**，要删策略加 `-RemovePolicy`（会先留一份 `.uninstalled.bak`）；已迁移的 Junction 用 `rollback` 还原）。
 
 ## 配置 policy.yaml
 

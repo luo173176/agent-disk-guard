@@ -28,18 +28,19 @@ function main() {
     }
     const status = (0, monitor_1.checkDisk)(policy);
     (0, logger_1.logInfo)("session 空间检查", { level: status.level, free: status.freeBytes, source });
-    if (status.level === "ok") {
-        process.exit(0); // 正常时不打扰对话
+    // 只有真的低于阈值才注入告警：ok 不打扰，
+    // unknown（查询失败，例如受限令牌下 WMI 被拒）同样保持沉默——否则每个会话都往对话里塞一条无用的失败提示。
+    if (status.level !== "warn" && status.level !== "critical") {
+        process.exit(0);
     }
     const lines = [(0, monitor_1.statusLine)(status)];
-    if (status.level !== "unknown") {
-        const cands = (0, monitor_1.suggestCleanup)(policy, false);
-        if (cands.length > 0) {
-            lines.push("AgentDiskGuard 建议迁移以下 C 盘目录（命令默认 dry-run）：");
-            lines.push(...(0, monitor_1.cleanupAdvice)(cands.slice(0, 5)));
-        }
+    const cands = (0, monitor_1.suggestCleanup)(policy, false);
+    if (cands.length > 0) {
+        lines.push("AgentDiskGuard 建议迁移以下 C 盘目录（命令默认 dry-run）：");
+        lines.push(...(0, monitor_1.cleanupAdvice)(cands.slice(0, 5)));
     }
-    process.stdout.write(JSON.stringify((0, adapters_1.additionalContextOutput)(lines.join("\n"))));
+    // stdout 接的是宿主管道，process.exit 可能截断异步写 —— 必须同步写
+    require("fs").writeSync(1, JSON.stringify((0, adapters_1.additionalContextOutput)(lines.join("\n"))));
     process.exit(0);
 }
 try {

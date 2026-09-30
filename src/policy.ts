@@ -163,7 +163,8 @@ function parseBlock(lines: Line[], i: number, indent: number): [unknown, number]
 
 /** 解析 YAML 子集文本为 JS 值；失败抛错。 */
 export function parseYamlSubset(text: string): unknown {
-  const lines = preprocess(text);
+  // PowerShell 5.1 的 `Set-Content -Encoding UTF8` 会写 BOM，剥掉以免首个键名被污染
+  const lines = preprocess(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
   if (lines.length === 0) return {};
   const [value, next] = parseBlock(lines, 0, lines[0].indent);
   if (next < lines.length) throw new Error(`policy.yaml 存在多余或缩进不一致的行: "${lines[next].text}"`);

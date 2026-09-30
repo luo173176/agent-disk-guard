@@ -21,7 +21,7 @@ import { checkDisk, cleanupAdvice, statusLine, suggestCleanup, type DiskStatus }
 import { executeMigration, planMigration, purgeBackup, rollbackMigration } from "./migrate";
 import { readEntries } from "./journal";
 import { decisionToPreToolUseOutput, normalizeHookInput } from "./adapters";
-import { execSync, humanBytes, normalizePath, readJson } from "./util";
+import { execSync, dataDir, ensureDir, humanBytes, normalizePath, readJson } from "./util";
 import { configureLogging, logInfo } from "./logger";
 
 function usage(): string {
@@ -105,12 +105,18 @@ function cmdCheck(args: string[]): number {
   const jsonArg = argValue(args, "--input-json");
   let call: { toolName: string; toolInput: Record<string, unknown> } | null = null;
 
-  if (toolArg && jsonArg) {
-    call = { toolName: toolArg, toolInput: JSON.parse(jsonArg) };
-  } else {
-    // stdin: {tool_name, tool_input} 或 {tool, input}
-    const raw = fs.readFileSync(0, "utf8");
-    call = normalizeHookInput(JSON.parse(raw || "{}"));
+  try {
+    if (toolArg && jsonArg) {
+      call = { toolName: toolArg, toolInput: JSON.parse(jsonArg) };
+    } else {
+      // stdin: {tool_name, tool_input} 或 {tool, input}
+      const raw = fs.readFileSync(0, "utf8");
+      call = normalizeHookInput(JSON.parse(raw || "{}"));
+    }
+  } catch (e: unknown) {
+    // 非法 JSON 不该抛栈：在 hook 链路里会变成宿主看到的"钩子异常"，退出码也失去意义。
+    process.stderr.write(`输入 JSON 解析失败: ${e instanceof Error ? e.message : String(e)}\n`);
+    return 1;
   }
   if (!call) {
     process.stderr.write("缺少 --tool/--input-json 或 stdin JSON\n");
@@ -282,12 +288,37 @@ function cmdDoctor(): number {
   checks.push([`redirectRoot 可写 (${root})`, rootOk, rootOk ? "ok" : "请确认盘符存在且有写权限"]);
   const nodeOk = typeof process.versions.node === "string";
   checks.push(["Node 运行时", nodeOk, process.versions.node ?? ""]);
+  // 受限令牌 / 低完整性沙箱里 spawnSync 可能连进程都起不来（status 恒为 null）：
+  // 此时"有没有拿到输出"比退出码更能说明工具是否真的被调用到，避免 doctor 永久误报 ❌。
   const rb = execSync("robocopy.exe", ["/?"], { timeoutMs: 10000 });
-  checks.push(["robocopy 可用", rb.status !== null, `退出码 ${rb.status}（robocopy 帮助退出码非零属正常）`]);
+  const rbRan = rb.stdout.length > 0 || rb.status !== null;
+  checks.push([
+    "robocopy 可用",
+    rbRan,
+    rbRan ? `退出码 ${rb.status}（robocopy 帮助退出码非零属正常）` : "无法启动子进程（受限环境）；迁移将退化为逐条估算大小",
+  ]);
   const ml = execSync("cmd.exe", ["/c", "mklink", "/?"], { timeoutMs: 10000 });
-  checks.push(["mklink 可用", ml.stdout.length > 0 || ml.status === 1, ""]);
+  const mlRan = ml.stdout.length > 0 || ml.status !== null;
+  checks.push(["mklink 可用", mlRan, mlRan ? "" : "无法启动子进程（受限环境）；migrate 需要 mklink 权限"]);
   const hookJs = path.join(__dirname, "hook.js");
   checks.push(["hook.js 存在", fs.existsSync(hookJs), hookJs]);
+  // 日志目录可写性：受限令牌 / 低完整性沙箱下 hook 写不了日志，功能不受影响但排查会瞎，
+  // 因此这里主动探一次（而不是等日志模块自己失败）。
+  let logOk = false;
+  try {
+    ensureDir(dataDir());
+    const probe = path.join(dataDir(), ".adg-log-probe");
+    fs.writeFileSync(probe, "ok");
+    fs.unlinkSync(probe);
+    logOk = true;
+  } catch {
+    logOk = false;
+  }
+  checks.push([
+    "日志目录可写",
+    logOk,
+    logOk ? dataDir() : `写不了 ${dataDir()}（不影响拦截，但排查时看不到历史记录）`,
+  ]);
   for (const [name, ok, detail] of checks) {
     process.stdout.write(`${ok ? "✅" : "❌"} ${name}${detail ? `  ${detail}` : ""}\n`);
   }

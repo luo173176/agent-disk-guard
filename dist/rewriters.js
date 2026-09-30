@@ -8,6 +8,28 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.rewriteCommand = rewriteCommand;
 const util_1 = require("./util");
 const pathguard_1 = require("./pathguard");
+/** 会写缓存的 npm 子命令；`npm run/test/ls` 之类不该被塞 --cache。 */
+const NPM_CACHE_SUBCOMMANDS = new Set([
+    "install",
+    "i",
+    "ci",
+    "add",
+    "a",
+    "update",
+    "up",
+    "rebuild",
+    "rb",
+    "dedupe",
+    "dd",
+    "link",
+    "ln",
+    "exec",
+    "x",
+    "init",
+    "create",
+]);
+/** 命令包装器：其首 token 不是真正的包管理命令，真正的命令在 -Command / -c 之后的字符串里。 */
+const WRAPPERS = new Set(["pwsh", "powershell", "cmd", "bash", "sh", "zsh", "sudo", "env", "call"]);
 /** 已由环境变量接管、无需注入命令行参数的工具（仅记录说明）。 */
 const ENV_MANAGED_TOOLS = {
     pnpm: { env: "npm_config_store_dir", target: "pnpm-store" },
@@ -20,11 +42,24 @@ const ENV_MANAGED_TOOLS = {
     ollama: { env: "OLLAMA_MODELS", target: "ollama\\models" },
     huggingface: { env: "HF_HOME", target: "huggingface" },
 };
-/** 按换行、&&、;、| 切分命令，保留分隔符。 */
+/** 按换行、&&、;、| 切分命令，保留分隔符；引号内的分隔符不算分隔符。 */
 function splitSegments(cmd) {
     const parts = [];
     let cur = "";
+    let quote = null;
     for (let i = 0; i < cmd.length; i++) {
+        const ch = cmd[i];
+        if (quote) {
+            if (ch === quote)
+                quote = null;
+            cur += ch;
+            continue;
+        }
+        if (ch === '"' || ch === "'") {
+            quote = ch;
+            cur += ch;
+            continue;
+        }
         const two = cmd.slice(i, i + 2);
         if (two === "&&" || two === "||") {
             parts.push(cur, two);
@@ -32,7 +67,6 @@ function splitSegments(cmd) {
             i++;
             continue;
         }
-        const ch = cmd[i];
         if (ch === "\n" || ch === ";" || (ch === "|" && cmd[i + 1] !== "|")) {
             parts.push(cur, ch);
             cur = "";
@@ -44,6 +78,33 @@ function splitSegments(cmd) {
     return parts;
 }
 const isSeparator = (s) => /^(\r?\n|&&|\|\||;|\|)$/.test(s);
+/** 该 npm 调用是否会写缓存（子命令属于会下载/落盘的那批才算）。 */
+function npmWritesCache(segment) {
+    for (const t of segment.trim().split(/\s+/).slice(1)) {
+        if (t.startsWith("-"))
+            continue;
+        if (NPM_CACHE_SUBCOMMANDS.has(t.toLowerCase()))
+            return true;
+    }
+    return false;
+}
+/**
+ * 取出包装器内层命令：`pwsh -Command "npm install"` → `npm install`。
+ * 不是包装器、或没有 -Command/-c 参数时返回 null。
+ */
+function unwrapInner(segment) {
+    const tool = firstToken(segment);
+    if (!WRAPPERS.has(tool))
+        return null;
+    const m = segment.match(/(?:^|\s)(?:-command|-[a-z]*c|\/c)\s+([\s\S]+)$/i);
+    if (!m)
+        return null;
+    let inner = m[1].trim();
+    const q = inner[0];
+    if (inner.length >= 2 && (q === '"' || q === "'") && inner.endsWith(q))
+        inner = inner.slice(1, -1).trim();
+    return inner || null;
+}
 /** 取出段内第一个可执行名（去引号、去 ./、忽略大小写、兼容 npm.cmd）。 */
 function firstToken(segment) {
     const m = segment.trim().match(/^(?:"([^"]+)"|(\S+))/);
@@ -82,6 +143,9 @@ function rewriteSegment(segment, policy, notes) {
     // npm / npm exec（npx）：--cache
     if ((tool === "npm" || tool === "npx" || tool === "npm-cli" || tool === "npmx") && !hasFlag(segment, "--cache")) {
         if (tool === "npm") {
+            // 只有会写缓存的子命令才注入；`npm run test` / `npm ls` 之类保持原样
+            if (!npmWritesCache(segment))
+                return segment;
             if (envAlreadyRedirected(policy, "npm_config_cache", "npm-cache"))
                 return segment;
             notes.push(`npm 缓存 → ${root}\\npm-cache`);
@@ -149,8 +213,26 @@ function rewriteSegment(segment, policy, notes) {
 /** 对整条命令执行改写。 */
 function rewriteCommand(command, policy) {
     const notes = [];
+    let unrewritable = false;
     const parts = splitSegments(command);
-    const out = parts.map((seg) => (isSeparator(seg) ? seg : rewriteSegment(seg, policy, notes)));
+    const out = parts.map((seg) => {
+        if (isSeparator(seg))
+            return seg;
+        const rewritten = rewriteSegment(seg, policy, notes);
+        if (rewritten !== seg)
+            return rewritten;
+        // 段本身没被改写：若它是包装器（pwsh -Command "…"），检查引号里的内层命令。
+        // 内层在引号中，字符串手术容易把命令拼坏，所以只报告不改写 —— 由调用方决定是否询问用户。
+        const inner = unwrapInner(seg);
+        if (inner) {
+            const innerRw = rewriteCommand(inner, policy);
+            if (innerRw.changed) {
+                unrewritable = true;
+                notes.push(`嵌套命令无法自动注入缓存参数（请显式加参数或改用目标盘路径）：${innerRw.notes.join("；")}`);
+            }
+        }
+        return rewritten;
+    });
     const result = out.join("");
-    return { command: result, changed: result !== command, notes: [...new Set(notes)] };
+    return { command: result, changed: result !== command, notes: [...new Set(notes)], unrewritable };
 }

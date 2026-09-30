@@ -30,9 +30,12 @@ function main(): void {
   const policy = loadPolicy();
   const decision = evaluateToolCall(call.toolName, call.toolInput, policy);
 
-  if (decision.action !== "allow" || decision.updatedInput) {
-    logInfo("hook 决策", { tool: call.toolName, action: decision.action, reason: decision.reason });
+  // allow 且没有要改写的入参 = 本插件对该调用没有意见：
+  // 必须保持沉默（不输出任何 JSON），否则 permissionDecision="allow" 会顶掉宿主自己的 ask/deny 决策。
+  if (decision.action === "allow" && !decision.updatedInput) {
+    process.exit(0);
   }
+  logInfo("hook 决策", { tool: call.toolName, action: decision.action, reason: decision.reason });
   // stdout 接的是宿主的管道，process.exit 可能截断异步写 —— 必须同步写
   require("fs").writeSync(1, JSON.stringify(decisionToPreToolUseOutput(decision)));
   process.exit(0);

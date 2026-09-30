@@ -8,20 +8,47 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.evaluateToolCall = evaluateToolCall;
 const pathguard_1 = require("./pathguard");
 const rewriters_1 = require("./rewriters");
-/** 写文件类工具与其路径字段 */
+/** 写文件类工具与其路径字段（键一律小写，匹配时对工具名做 toLowerCase） */
 const FILE_TOOLS = {
-    Write: ["file_path"],
-    Edit: ["file_path"],
-    MultiEdit: ["file_path"],
-    NotebookEdit: ["notebook_path"],
-    NotebookEditCell: ["notebook_path"],
+    write: ["file_path"],
+    edit: ["file_path"],
+    multiedit: ["file_path"],
+    multi_edit: ["file_path"],
+    apply_patch: ["file_path", "path"],
+    str_replace_editor: ["path"],
+    notebookedit: ["notebook_path"],
+    notebook_edit: ["notebook_path"],
+    notebookeditcell: ["notebook_path"],
 };
-/** 命令类工具与其命令字段 */
+/** 命令类工具与其命令字段（含 DSH 的 pwsh / shell 等小写工具名） */
 const COMMAND_TOOLS = {
-    Bash: ["command"],
-    PowerShell: ["command", "script"],
-    Shell: ["command"],
+    bash: ["command"],
+    powershell: ["command", "script"],
+    pwsh: ["command", "script"],
+    shell: ["command"],
+    cmd: ["command"],
 };
+/**
+ * 只读工具：入参里虽然也有 file_path/path，但读操作不会被写盘，
+ * 出现在这里是为了让通用兜底绝不改写它们的路径（改写只读路径毫无意义，且会让模型读到不存在的文件）。
+ */
+const READ_TOOLS = new Set([
+    "read",
+    "view",
+    "notebookread",
+    "notebook_read",
+    "glob",
+    "grep",
+    "search",
+    "find",
+    "ls",
+    "list",
+    "cat",
+    "head",
+    "tail",
+    "fetch",
+    "web_fetch",
+]);
 function deny(reason) {
     return { action: "deny", reason };
 }
@@ -109,36 +136,34 @@ function decideCommand(tool, input, policy) {
                     return allowWith(input, `AgentDiskGuard 改写命令，缓存/依赖已指向 D 盘：${rw.notes.join("；")}`, { [field]: rw.command });
             }
         }
-        else if (rw.notes.length > 0 && policy.commandMode === "ask") {
+        if (rw.unrewritable) {
+            // 命令会写 C 盘缓存，但它藏在包装器里（pwsh -Command "npm install"），无法安全注入参数：
+            // 不能默默放行，交给用户确认（deny 模式则直接拒绝）。
+            if (policy.commandMode === "deny")
+                return deny(`AgentDiskGuard 拦截：${rw.notes.join("；")}`);
+            return ask(`AgentDiskGuard 需确认：${rw.notes.join("；")}`);
+        }
+        if (rw.notes.length > 0 && policy.commandMode === "ask") {
             return ask(`AgentDiskGuard 需确认：${rw.notes.join("；")}。`);
         }
         return { action: "allow" };
     }
     return { action: "allow" };
 }
-/** 决策入口：未知工具一律放行（本插件只对明确分类的工具表态）。 */
+/**
+ * 决策入口：未知且不带路径字段的工具一律放行（本插件只对明确分类的工具表态）。
+ * 工具名统一按小写匹配，兼容 Claude Code 的 `Write`/`Bash` 与 DSH 的 `write`/`pwsh`。
+ */
 function evaluateToolCall(toolName, toolInput, policy) {
-    const tool = (toolName || "").trim();
+    const tool = (toolName || "").trim().toLowerCase();
     const input = toolInput && typeof toolInput === "object" ? toolInput : {};
-    if (FILE_TOOLS[tool])
-        return decideFileWrite(tool, input, policy);
+    // 只读工具永不改写
+    if (READ_TOOLS.has(tool))
+        return { action: "allow" };
     if (COMMAND_TOOLS[tool])
         return decideCommand(tool, input, policy);
-    // 通用兜底：任何工具入参里出现 file_path/path/notebook_path 且命中受保护路径，同样处理
-    for (const field of ["file_path", "notebook_path", "path"]) {
-        const v = input[field];
-        if (typeof v === "string" && v.trim()) {
-            const check = (0, pathguard_1.checkPath)(v, policy);
-            if (check.protected && policy.fileWriteMode !== "off") {
-                if (policy.fileWriteMode === "redirect" && check.redirectPath) {
-                    return allowWith(input, `AgentDiskGuard 重定向：${v} → ${check.redirectPath}`, { [field]: check.redirectPath });
-                }
-                if (policy.fileWriteMode === "deny")
-                    return deny(`AgentDiskGuard 拦截：${check.reason ?? v}`);
-                if (policy.fileWriteMode === "ask")
-                    return ask(`AgentDiskGuard 需确认：${check.reason ?? v}`);
-            }
-        }
-    }
-    return { action: "allow" };
+    // 写文件工具与"任何入参里带路径字段的工具"共用同一条判定：
+    // decideFileWrite 在工具名未知时会回落到 file_path/notebook_path/path，
+    // 因此条目级 mode（系统目录固定 deny）在兜底路径上同样生效。
+    return decideFileWrite(tool, input, policy);
 }

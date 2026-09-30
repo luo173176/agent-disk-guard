@@ -130,13 +130,20 @@ function cmdCheck(args) {
     const toolArg = argValue(args, "--tool");
     const jsonArg = argValue(args, "--input-json");
     let call = null;
-    if (toolArg && jsonArg) {
-        call = { toolName: toolArg, toolInput: JSON.parse(jsonArg) };
+    try {
+        if (toolArg && jsonArg) {
+            call = { toolName: toolArg, toolInput: JSON.parse(jsonArg) };
+        }
+        else {
+            // stdin: {tool_name, tool_input} 或 {tool, input}
+            const raw = fs.readFileSync(0, "utf8");
+            call = (0, adapters_1.normalizeHookInput)(JSON.parse(raw || "{}"));
+        }
     }
-    else {
-        // stdin: {tool_name, tool_input} 或 {tool, input}
-        const raw = fs.readFileSync(0, "utf8");
-        call = (0, adapters_1.normalizeHookInput)(JSON.parse(raw || "{}"));
+    catch (e) {
+        // 非法 JSON 不该抛栈：在 hook 链路里会变成宿主看到的"钩子异常"，退出码也失去意义。
+        process.stderr.write(`输入 JSON 解析失败: ${e instanceof Error ? e.message : String(e)}\n`);
+        return 1;
     }
     if (!call) {
         process.stderr.write("缺少 --tool/--input-json 或 stdin JSON\n");
@@ -284,7 +291,7 @@ function cmdMonitor(args) {
     const timer = setInterval(tick, Math.max(1, intervalMin) * 60 * 1000);
     const stop = () => {
         clearInterval(timer);
-        process.exit(0);
+        process.exitCode = 0; // 清掉定时器后事件循环自然排空退出，避免截断输出
     };
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
@@ -310,12 +317,38 @@ function cmdDoctor() {
     checks.push([`redirectRoot 可写 (${root})`, rootOk, rootOk ? "ok" : "请确认盘符存在且有写权限"]);
     const nodeOk = typeof process.versions.node === "string";
     checks.push(["Node 运行时", nodeOk, process.versions.node ?? ""]);
+    // 受限令牌 / 低完整性沙箱里 spawnSync 可能连进程都起不来（status 恒为 null）：
+    // 此时"有没有拿到输出"比退出码更能说明工具是否真的被调用到，避免 doctor 永久误报 ❌。
     const rb = (0, util_1.execSync)("robocopy.exe", ["/?"], { timeoutMs: 10000 });
-    checks.push(["robocopy 可用", rb.status !== null, `退出码 ${rb.status}（robocopy 帮助退出码非零属正常）`]);
+    const rbRan = rb.stdout.length > 0 || rb.status !== null;
+    checks.push([
+        "robocopy 可用",
+        rbRan,
+        rbRan ? `退出码 ${rb.status}（robocopy 帮助退出码非零属正常）` : "无法启动子进程（受限环境）；迁移将退化为逐条估算大小",
+    ]);
     const ml = (0, util_1.execSync)("cmd.exe", ["/c", "mklink", "/?"], { timeoutMs: 10000 });
-    checks.push(["mklink 可用", ml.stdout.length > 0 || ml.status === 1, ""]);
+    const mlRan = ml.stdout.length > 0 || ml.status !== null;
+    checks.push(["mklink 可用", mlRan, mlRan ? "" : "无法启动子进程（受限环境）；migrate 需要 mklink 权限"]);
     const hookJs = path.join(__dirname, "hook.js");
     checks.push(["hook.js 存在", fs.existsSync(hookJs), hookJs]);
+    // 日志目录可写性：受限令牌 / 低完整性沙箱下 hook 写不了日志，功能不受影响但排查会瞎，
+    // 因此这里主动探一次（而不是等日志模块自己失败）。
+    let logOk = false;
+    try {
+        (0, util_1.ensureDir)((0, util_1.dataDir)());
+        const probe = path.join((0, util_1.dataDir)(), ".adg-log-probe");
+        fs.writeFileSync(probe, "ok");
+        fs.unlinkSync(probe);
+        logOk = true;
+    }
+    catch {
+        logOk = false;
+    }
+    checks.push([
+        "日志目录可写",
+        logOk,
+        logOk ? (0, util_1.dataDir)() : `写不了 ${(0, util_1.dataDir)()}（不影响拦截，但排查时看不到历史记录）`,
+    ]);
     for (const [name, ok, detail] of checks) {
         process.stdout.write(`${ok ? "✅" : "❌"} ${name}${detail ? `  ${detail}` : ""}\n`);
     }
@@ -379,9 +412,9 @@ function main(argv) {
             return 1;
     }
 }
-// 直接运行 dist/cli.js 时执行
+// 直接运行 dist/cli.js 时执行（exitCode 而非 exit：给 stdout 管道留出刷写时间）
 if (require.main === module) {
     const code = main(process.argv.slice(2));
     (0, logger_1.logInfo)("cli 退出", { code });
-    process.exit(code);
+    process.exitCode = code;
 }
