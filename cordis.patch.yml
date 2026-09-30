@@ -1,0 +1,8 @@
+# AgentDiskGuard — 组合包 patch：把磁盘守卫挂进 DSH profile 的插件树。
+# 本包声明 dsh.bundle.patch（见 package.json），由 `dsh plugin add` 激活本层。
+# 守卫逻辑经官方桥接 @deepseek-ai/dsh-hooks-claude-code 运行本包自带的
+# hooks/hooks.json（PreToolUse 拦截 + SessionStart 空间检查），路径由
+# dsh/index.mjs 按安装位置计算，无需在此写死。
+- insert:
+    - id: agent-disk-guard
+      name: agent-disk-guard/dsh

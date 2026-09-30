@@ -1,6 +1,6 @@
 {
   "name": "agent-disk-guard",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Prevents AI coding agents from filling up drive C: — intercepts file writes and shell commands via PreToolUse hooks, redirects package caches to a configurable drive (e.g. D:\\AgentCache), injects environment variables, migrates existing directories with robocopy+junction, and monitors free disk space. Works with Claude Code, ZCode, DeepSeek Harness and other Claude Code-compatible agent harnesses.",
   "description_i18n": {
     "zh-CN": "防止 AI 编码 Agent 跑满 C 盘：PreToolUse Hook 拦截对 C 盘受保护路径的写入与危险命令，把 npm/pip/cargo 等缓存重定向到 D 盘，注入环境变量，robocopy+junction 迁移已有目录，并监控 C 盘剩余空间告警。兼容 Claude Code、ZCode、DeepSeek Harness 等 Claude Code 系 Agent Harness。"

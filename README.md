@@ -52,9 +52,28 @@
 
 方式 B（本地开发市场）：clone 本仓库后，把 `agent-disk-guard/` 目录放进任意市场根目录并配置 `marketplace.json` 指向它。
 
-### DeepSeek Harness / 其他 Claude Code 系 Harness
+### DeepSeek Harness（组合包 / bundle）
 
-截至发文，DeepSeek Harness 没有公开的插件清单格式文档；社区实现的 harness hooks 子系统普遍兼容 Claude Code 的 `hooks.json` 模式。按兼容程度三选一（详见[接入其他 Agent](#接入其他-agent适配层)）：
+本包在 `package.json` 里声明了 `dsh.bundle`（组合包 manifest），安装后经官方桥接插件 `@deepseek-ai/dsh-hooks-claude-code` 把自带的 `hooks/hooks.json` 挂到 DSH 的 PreToolUse / SessionStart 拦截点，开箱即用：
+
+```sh
+# 从 GitHub 安装进 profile（dsh plugin add 转发给 pnpm，支持 git 地址）
+dsh plugin --profile <name> add github:luo173176/agent-disk-guard
+# 或本地 clone 后安装：
+dsh plugin --profile <name> add <clone目录>
+# npm 发布后也可以：
+dsh plugin add agent-disk-guard
+```
+
+DSH 专属注意事项：
+
+- DSH 的 Claude Code 桥接**不支持 `updatedInput`**（改写入参会被记录并忽略）。因此建议 DSH 用户把策略 `fileWriteMode` 设为 `deny`：守卫拒绝 C 盘写入并在模型可见的理由里给出 D 盘目标路径，模型会用新路径重试。`deny`/`ask` 决策被桥接完整尊重。
+- 命令缓存重定向在 DSH 上主要靠环境变量：先用 `install.ps1` 或 `agent-disk-guard env --set` 写入用户级变量，DSH 及其工具子进程会继承。
+- 桥接缺失时组合包会降级：加载不报错，只打警告，不影响 DSH 启动。
+
+### 其他 Claude Code 系 Harness
+
+社区 harness 的 hooks 子系统普遍兼容 Claude Code 的 `hooks.json` 模式，按兼容程度三选一（详见[接入其他 Agent](#接入其他-agent适配层)）：
 
 1. **hooks 兼容 Claude Code** → 把 `hooks/hooks.json` 的条目复制进其 hooks 配置（命令统一为 `node "<仓库路径>/dist/hook.js"`）；
 2. **有生命周期钩子但格式不同** → 在钩子里调用通用适配器 `agent-disk-guard check --tool <Tool> --input-json '<json>'`，按返回的 `permissionDecision` 处理；
@@ -73,7 +92,7 @@ agent-disk-guard doctor
 |---|---|---|---|---|
 | ZCode | ✅ | ✅ | ✅ `updatedInput` | ✅ `additionalContext` |
 | Claude Code | ✅ | ✅ | ✅ `updatedInput` | ✅ |
-| DeepSeek Harness 等 | 取决于实现 | ✅ | 不支持时请把策略 `fileWriteMode` 设为 `deny` | 取决于实现 |
+| DeepSeek Harness（dsh.bundle + 官方 CC 桥接） | ✅ | ✅ | ❌ 桥接忽略 `updatedInput`，建议 `fileWriteMode: deny` | ✅ |
 
 > 不支持 `updatedInput` 的 Host 上，`redirect` 决策会退化为"放行 + 理由里提示新路径"；想强制拦截就把 `policy.yaml` 的 `fileWriteMode` 改成 `deny`。
 
@@ -211,7 +230,7 @@ journal 刻意放在 C 盘（KB 级文本）：即使 D 盘损坏，回滚信息
 }
 ```
 
-**Claude Code 系 Harness（含 DeepSeek Harness 若兼容）** —— 在其 hooks 配置中加入：
+**其他 Claude Code 系 Harness** —— 在其 hooks 配置中加入：
 
 ```json
 {

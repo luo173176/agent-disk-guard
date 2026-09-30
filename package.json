@@ -1,6 +1,6 @@
 {
   "name": "agent-disk-guard",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AgentDiskGuard — prevent AI coding agents (Claude Code, ZCode, DeepSeek Harness, ...) from filling up drive C: (hook interception, cache redirection, env injection, robocopy+junction migration, disk monitoring).",
   "author": "luo173176",
   "license": "MIT",
@@ -15,11 +15,19 @@
   "bin": {
     "agent-disk-guard": "./bin/agent-disk-guard.cjs"
   },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./dsh": "./dsh/index.mjs",
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist",
+    "dsh",
     "hooks",
     "config",
     "bin",
+    "cordis.patch.yml",
     ".claude-plugin",
     ".zcode-plugin",
     "install.ps1",
@@ -27,6 +35,11 @@
     "README.md",
     "LICENSE"
   ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "node --test",
@@ -40,11 +53,15 @@
     "junction",
     "windows",
     "claude-code",
-    "deepseek",
+    "deepseek-harness",
+    "dsh-bundle",
     "hooks"
   ],
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-hooks-claude-code": "^0.2.0-rc.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
