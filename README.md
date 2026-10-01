@@ -54,7 +54,7 @@
 
 ### DeepSeek Harness（组合包 / bundle）
 
-本包在 `package.json` 里声明了 `dsh.bundle`（组合包 manifest），安装后经官方桥接插件 `@deepseek-ai/dsh-hooks-claude-code` 把自带的 `hooks/hooks.json` 挂到 DSH 的 PreToolUse / SessionStart 拦截点，开箱即用：
+本包在 `package.json` 里声明了 `dsh.bundle`（组合包 manifest），安装后经官方桥接插件 `@deepseek-ai/dsh-hooks-claude-code` 把自带的 `hooks/hooks.json` 挂到 DSH 的 PreToolUse 拦截点；会话启动提示由组合包自己用顶层 ctx 注入（桥接的 SessionStart 在 DSH 上收不到事件，见下），开箱即用：
 
 ```sh
 # 从 GitHub 安装进 profile（dsh plugin add 转发给 pnpm，支持 git 地址）
@@ -72,7 +72,8 @@ DSH 专属注意事项（0.3.2 起基本由插件自动处理，无需手工改�
   - 不采纳改写的宿主（DSH）→ `deny`，理由里直接给出**改写后的完整命令或目标路径**，模型照抄重试即可。
 - 这个降级不是锦上添花：旧版在 DSH 上返回 `allow + updatedInput`，桥接把改写入参记一条 warn 后丢弃，命令照原样执行，缓存还是落 C 盘——看起来拦住了，实际什么都没发生。
 - **重定向根自动回退**：不采纳改写的宿主（DSH）下，理由里的路径是交给**模型**去执行的，而模型的可写范围由宿主沙箱决定 —— 所以这时直接采用 `<会话工作区>\.agent-cache`，不采信 hook 侧的可写性探测（hook 进程的可写范围与模型毫无关系，实测 hook 在 DSH 沙箱下连会话工作区都写不进去）。采纳改写的宿主仍按 `redirectRoot` 的可写性回退。设 `redirectRootFallback: false` 可关闭全部回退。
-- **SessionStart 主动告知运行态**：命中不采纳改写的宿主时，会话开头注入一条 additionalContext，说明「会写 C 盘缓存的命令必须显式带缓存参数」以及当前实际生效的缓存根。
+- **会话启动主动告知运行态**：命中不采纳改写的宿主时，会话开头注入一条消息，说明「会写 C 盘缓存的命令必须显式带缓存参数」以及当前实际生效的缓存根。**这条通路不走桥接的 SessionStart**：组合包是用 `ctx.plugin(bridge)` 把桥接挂成*子* ctx 的，而 Cordis 的 `ctx.on` 只登记在调用者自己的 `_hooks` 上（`cordis/lib/index.js` 里的 `dispatch` 只读 `this._hooks`，不跨 ctx 合并），子 ctx 收不到 `agent/created` / `agent/pre-step`。实测四个会话的 hook 记录里 `SessionStart` 与 `UserPromptSubmit` 条数均为 0，同配置的 `PreToolUse` 有 160+ 条，与这个推断一致。因此 `dsh/session-notice.mjs` 用与官方 `dsh-experimental-agent-team` 同一层级的**顶层 ctx** 注册 `agent/created`（`agent.inject`），并保留 `agent/pre-step` 作兜底；两条通路共享一个已注入集合，每个 agent 只注入一次。
+- `hooks/hooks.json` 里的 SessionStart 条目保留给其他宿主——Claude Code / ZCode 走原生通路，不受这里影响。
 - 命令缓存仍建议配合用户级环境变量：`install.ps1` 或 `agent-disk-guard env --set` 写一次，DSH 及其工具子进程都会继承（这条通道不依赖 hook 改写）。
 - 桥接缺失时组合包会降级：加载不报错，只打警告，不影响 DSH 启动。
 
@@ -97,7 +98,7 @@ agent-disk-guard doctor
 |---|---|---|---|---|
 | ZCode | ✅ | ✅ | ✅ `updatedInput` | ✅ `additionalContext` |
 | Claude Code | ✅ | ✅ | ✅ `updatedInput` | ✅ |
-| DeepSeek Harness（dsh.bundle + 官方 CC 桥接） | ✅ | ✅ | ⚠️ 桥接忽略 `updatedInput` → 自动降级为 `deny`，理由里给改写后的命令 | ✅ |
+| DeepSeek Harness（dsh.bundle + 官方 CC 桥接） | ✅ | ✅ | ⚠️ 桥接忽略 `updatedInput` → 自动降级为 `deny`，理由里给改写后的命令 | ✅ 组合包顶层 ctx 注入（桥接的 `SessionStart` 不触发） |
 
 > 不支持 `updatedInput` 的 Host 上，0.3.2 起不再静默退化为"放行 + 提示新路径"，而是转成**带可执行命令的 `deny`**（旧行为是 `updatedInput` 被桥接丢弃后原命令照跑）。想手工覆盖宿主的自动探测，在 `policy.yaml` 里写 `hostCapabilities: auto`（默认）｜`updatedInput`｜`noUpdatedInput`。
 
@@ -182,8 +183,9 @@ monitor:
 - **Junction 自动放行**：目录一旦迁移成 Junction（数据实际已在 D 盘），守卫检测到 reparse point 后不再拦截，用户不会被锁死；
 - **mirror 模式**：没有 `redirect` 名的受保护路径，重定向到 `<根>\mirror\home\<相对用户主目录>`；
 - **C 盘根散文件**（`C:\foo.txt`）也拦，防止 Agent 往盘根塞垃圾；
-- **宿主能力**：`hostCapabilities: auto` 默认按 `DSH_*` 环境变量探测。不采纳改写入参的宿主上，`redirect` / `rewrite` 会转成 `deny` 并在理由里给出改写后的命令——把 `updatedInput` 交给这种宿主只会被桥接丢弃，原命令照跑；
-- **回退根**：`redirectRootFallback: true`（默认）下，`redirectRoot` 不可写时 hook 改用 `<会话工作区>\.agent-cache`；`agent-disk-guard doctor` 会显示探测到的宿主与实际使用的根。
+- **宿主能力**：`hostCapabilities: auto` 默认按环境变量探测（`DSH_*` 任一，或 `ELECTRON_RUN_AS_NODE=1`）。不采纳改写入参的宿主上，`redirect` / `rewrite` 会转成 `deny` 并在理由里给出改写后的命令——把 `updatedInput` 交给这种宿主只会被桥接丢弃，原命令照跑；
+- **回退根**：`redirectRootFallback: true`（默认）下，不采纳改写的宿主直接采用 `<会话工作区>\.agent-cache`（该路径由模型执行，hook 侧探测不到模型的沙箱范围），采纳改写的宿主才按 `redirectRoot` 的可写性回退；`agent-disk-guard doctor` 会显示探测到的宿主与实际使用的根。
+- **会话启动提示**：`monitor.sessionStartCheck` 控制空间告警，宿主运行态提示与它无关、始终注入；文本由 `src/notice.ts` 统一生成，SessionStart hook 与 DSH 组合包共用一份。
 
 ## 命令一览
 

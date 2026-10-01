@@ -3,7 +3,8 @@
  *
  * 职责：把官方桥接插件 `@deepseek-ai/dsh-hooks-claude-code` 挂载到 DSH，
  * 指向本包自带的 Claude Code 风格 hooks 配置（hooks/hooks.json），让
- * PreToolUse / SessionStart 等拦截在 DSH 上生效。
+ * PreToolUse 拦截在 DSH 上生效；会话启动提示则由 ./session-notice.mjs 用顶层
+ * ctx 自己注入（桥接挂成子 ctx 后收不到 agent/created）。
  *
  * 路径基于 import.meta.url 计算（安装位置无关）；用户可通过 Cordis 配置
  * 覆盖 configPath / pluginRoot / projectDir。
@@ -11,6 +12,7 @@
 
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { installSessionNotice } from './session-notice.mjs'
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -21,6 +23,9 @@ export const name = 'agent-disk-guard'
  * @param {{ configPath?: string, pluginRoot?: string, projectDir?: string, defaultTimeoutMs?: number }} [config]
  */
 export async function apply(ctx, config = {}) {
+  // 先装会话启动提示：它不依赖桥接，桥接缺失时也该有
+  installSessionNotice(ctx, { pkgRoot })
+
   let bridge
   try {
     bridge = await import('@deepseek-ai/dsh-hooks-claude-code')
