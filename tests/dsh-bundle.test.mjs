@@ -28,7 +28,9 @@ function fakeCtx() {
   };
 }
 
-function fakeAgent(id, injected, cwd, sessionId = id) {
+let agentSeq = 0;
+
+function fakeAgent(id, injected, cwd, sessionId = `s-${++agentSeq}-${id}`) {
   return {
     id,
     // session.id 是幂等键；session.header.cwd 是重定向根的来源——宿主进程的 process.cwd()
@@ -138,4 +140,20 @@ test('提示里的缓存根取自 agent 的会话工作区，而非宿主进程 
     '缓存根必须落在会话工作区内'
   );
   assert.doesNotMatch(injected[0].content[0].text, /\.dsh\\profiles/);
+});
+
+test('宿主重载插件后不会对同一会话重复注入', async () => {
+  const sessionId = 's-reload';
+  const ctx1 = await setup();
+  const first = [];
+  ctx1.listeners.get('agent/created')({ agent: fakeAgent('a-1', first, 'D:\\ws', sessionId) });
+  assert.equal(first.length, 1);
+
+  // 宿主重载 = 重新求值模块；模块级变量会归零，只有共享的全局集合能挡住重复
+  const reloaded = await import(pathToFileURL(path.join(pkgRoot, 'dsh', 'index.mjs')).href + '?reload=1');
+  const ctx2 = fakeCtx();
+  await reloaded.apply(ctx2, {});
+  const second = [];
+  ctx2.listeners.get('agent/created')({ agent: fakeAgent('a-2', second, 'D:\\ws', sessionId) });
+  assert.equal(second.length, 0, '重载不得让同一会话再注入一次');
 });

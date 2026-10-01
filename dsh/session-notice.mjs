@@ -66,7 +66,10 @@ export function installSessionNotice(ctx, { pkgRoot }) {
 
   // 幂等按会话记账，不按 agent：同一会话里先后建出多个 agent（主 agent 与子 agent）时，
   // 按 agent 记账会让同一段提示在对话里出现两遍——实测就是这么冒出来的。
-  const noticed = new Set()
+  // 集合挂在 globalThis 上：宿主重载 profile 插件会重新求值本模块，模块级变量会归零，
+  // 只有跨重载共享同一份集合才不会再注入一次。
+  const state = (globalThis[Symbol.for('agent-disk-guard.session-notice')] ??= { noticed: new Set() })
+  const noticed = state.noticed
   const keyOf = (agent) => agent?.session?.id ?? agent?.id
   const take = (agent) => {
     const key = keyOf(agent)
