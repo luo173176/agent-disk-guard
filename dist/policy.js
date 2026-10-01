@@ -268,6 +268,10 @@ function materialize(raw) {
         whitelist,
         commandRules,
         monitor,
+        hostCapabilities: (["auto", "updatedInput", "noUpdatedInput"].includes(str(raw.hostCapabilities, "auto"))
+            ? str(raw.hostCapabilities, "auto")
+            : "auto"),
+        redirectRootFallback: raw.redirectRootFallback !== false,
         failOpen: raw.failOpen !== false,
     };
 }
@@ -311,6 +315,8 @@ function defaultPolicyObject() {
             { pattern: "\\b(rd|rmdir|del|erase|Remove-Item)\\b[^&|;]{0,120}\\s+C:\\\\Windows\\b", action: "deny", reason: "禁止删除 C:\\Windows 内容" },
         ],
         monitor: { enabled: true, warnGB: 20, criticalGB: 10, sessionStartCheck: true },
+        hostCapabilities: "auto",
+        redirectRootFallback: true,
         failOpen: true,
     };
 }

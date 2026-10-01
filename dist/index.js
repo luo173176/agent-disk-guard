@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.additionalContextOutput = exports.decisionToPreToolUseOutput = exports.normalizeHookInput = exports.journalFile = exports.readEntries = exports.purgeBackup = exports.rollbackMigration = exports.executeMigration = exports.planMigration = exports.classifyFree = exports.suggestCleanup = exports.checkDisk = exports.mergeMavenOpts = exports.buildEnvPlan = exports.rewriteCommand = exports.isReparsePoint = exports.computeRedirectPath = exports.checkPath = exports.evaluateToolCall = exports.resolvePolicyFilePath = exports.parseYamlSubset = exports.defaultPolicy = exports.loadPolicy = void 0;
+exports.additionalContextOutput = exports.decisionToPreToolUseOutput = exports.normalizeHookInput = exports.journalFile = exports.readEntries = exports.purgeBackup = exports.rollbackMigration = exports.executeMigration = exports.planMigration = exports.classifyFree = exports.suggestCleanup = exports.checkDisk = exports.mergeMavenOpts = exports.buildEnvPlan = exports.rewriteCommand = exports.detectHost = exports.withWritableRedirectRoot = exports.resolveWritableRedirectRoot = exports.isReparsePoint = exports.computeRedirectPath = exports.checkPath = exports.evaluateToolCall = exports.resolvePolicyFilePath = exports.parseYamlSubset = exports.defaultPolicy = exports.loadPolicy = void 0;
 /**
  * AgentDiskGuard — 库入口。
  * 供其他 Node 程序/Agent 插件直接复用决策核心（纯函数，无副作用）。
@@ -16,6 +16,10 @@ var pathguard_1 = require("./pathguard");
 Object.defineProperty(exports, "checkPath", { enumerable: true, get: function () { return pathguard_1.checkPath; } });
 Object.defineProperty(exports, "computeRedirectPath", { enumerable: true, get: function () { return pathguard_1.computeRedirectPath; } });
 Object.defineProperty(exports, "isReparsePoint", { enumerable: true, get: function () { return pathguard_1.isReparsePoint; } });
+Object.defineProperty(exports, "resolveWritableRedirectRoot", { enumerable: true, get: function () { return pathguard_1.resolveWritableRedirectRoot; } });
+Object.defineProperty(exports, "withWritableRedirectRoot", { enumerable: true, get: function () { return pathguard_1.withWritableRedirectRoot; } });
+var host_1 = require("./host");
+Object.defineProperty(exports, "detectHost", { enumerable: true, get: function () { return host_1.detectHost; } });
 var rewriters_1 = require("./rewriters");
 Object.defineProperty(exports, "rewriteCommand", { enumerable: true, get: function () { return rewriters_1.rewriteCommand; } });
 var envplan_1 = require("./envplan");

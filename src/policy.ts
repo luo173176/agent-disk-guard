@@ -213,6 +213,13 @@ export interface Policy {
   whitelist: string[];
   commandRules: CommandRule[];
   monitor: MonitorConfig;
+  /**
+   * 宿主是否采纳 PreToolUse 的 updatedInput（改写能力）：
+   * auto=按环境探测 | updatedInput=强制认为采纳 | noUpdatedInput=强制降级为「拒绝 + 给命令」。
+   */
+  hostCapabilities: "auto" | "updatedInput" | "noUpdatedInput";
+  /** 重定向根不可写时，是否自动回退到会话工作区（沙箱/宿主常只放行工作区） */
+  redirectRootFallback: boolean;
   /** hook 出错时是否放行（fail-open）。建议保持 true，避免拖死 Agent */
   failOpen: boolean;
 }
@@ -267,6 +274,10 @@ function materialize(raw: Record<string, unknown>): Policy {
     whitelist,
     commandRules,
     monitor,
+    hostCapabilities: (["auto", "updatedInput", "noUpdatedInput"].includes(str(raw.hostCapabilities, "auto"))
+      ? str(raw.hostCapabilities, "auto")
+      : "auto") as Policy["hostCapabilities"],
+    redirectRootFallback: raw.redirectRootFallback !== false,
     failOpen: raw.failOpen !== false,
   };
 }
@@ -311,6 +322,8 @@ export function defaultPolicyObject(): Record<string, unknown> {
       { pattern: "\\b(rd|rmdir|del|erase|Remove-Item)\\b[^&|;]{0,120}\\s+C:\\\\Windows\\b", action: "deny", reason: "禁止删除 C:\\Windows 内容" },
     ],
     monitor: { enabled: true, warnGB: 20, criticalGB: 10, sessionStartCheck: true },
+    hostCapabilities: "auto",
+    redirectRootFallback: true,
     failOpen: true,
   };
 }

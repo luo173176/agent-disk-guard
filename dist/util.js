@@ -45,6 +45,7 @@ exports.reparseTarget = reparseTarget;
 exports.driveLetter = driveLetter;
 exports.readJson = readJson;
 exports.ensureDir = ensureDir;
+exports.isDirWritable = isDirWritable;
 exports.appendJsonl = appendJsonl;
 exports.shortId = shortId;
 exports.execSync = execSync;
@@ -198,6 +199,31 @@ function readJson(file) {
 /** 幂等创建目录。 */
 function ensureDir(dir) {
     fs.mkdirSync(dir, { recursive: true });
+}
+/**
+ * 目录是否真的可写：建目录 + 写探针文件 + 删除。
+ * 沙箱/受限令牌下 mkdir 可能成功而写入被拒，所以探针必须真的落盘一次。
+ */
+function isDirWritable(dir) {
+    if (!dir)
+        return false;
+    const probe = path.join(dir, `.adg-write-probe-${process.pid}-${Date.now().toString(36)}`);
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(probe, "1");
+        return true;
+    }
+    catch {
+        return false;
+    }
+    finally {
+        try {
+            fs.unlinkSync(probe);
+        }
+        catch {
+            /* 未创建或已被清理 */
+        }
+    }
 }
 /** 跨进程安全地追加一行 JSONL。 */
 function appendJsonl(file, obj) {

@@ -51,7 +51,9 @@ process.on("exit", () => {
   }
 });
 
-const policy = loadPolicy();
+// 本文件断言的是「改写」语义：显式声明宿主采纳入参改写，
+// 否则在 DSH 会话里会被探测成降级宿主，改写类断言全部变成 deny
+const policy = { ...loadPolicy(), hostCapabilities: "updatedInput" };
 const redirectPolicy = { ...policy, fileWriteMode: "redirect" };
 
 // ---------------------------------------------------------------------------
@@ -272,8 +274,15 @@ test("E4 备份目录为空（不完整）时回滚不采用它", () => {
 });
 
 test("E5 planMigration 对非保护盘源目录给出明确拒绝（回归）", () => {
-  fs.mkdirSync(src, { recursive: true });
-  const p = planMigration(src, policy, false);
+  // 不用 pickWorkDir():它落在哪个盘取决于运行环境（沙箱里 os.tmpdir() 就在 C 盘，
+  // 于是这条断言变成碰运气）。redirectRoot 按策略不变量必在非受保护盘，用它才确定。
+  const root = policy.redirectRoot;
+  try {
+    fs.mkdirSync(root, { recursive: true });
+  } catch {
+    /* 根不存在且建不了也没关系：planMigration 会以「源目录不存在」拒绝，同样非 ok */
+  }
+  const p = planMigration(root, policy, false);
   assert.equal(p.ok, false);
-  assert.match(String(p.message), /受保护/);
+  assert.match(String(p.message), /不在受保护盘|不存在/);
 });

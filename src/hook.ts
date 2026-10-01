@@ -6,6 +6,7 @@
  */
 import { evaluateToolCall } from "./guard";
 import { loadPolicy } from "./policy";
+import { withWritableRedirectRoot } from "./pathguard";
 import { decisionToPreToolUseOutput, normalizeHookInput } from "./adapters";
 import { configureLogging, logError, logInfo } from "./logger";
 
@@ -27,7 +28,9 @@ function main(): void {
     process.exit(0);
   }
 
-  const policy = loadPolicy();
+  // 重定向根在受限环境里可能根本写不进去（沙箱只放行会话工作区），
+  // 换成真正可写的位置，否则拒绝理由和改写目标都指向一个走不通的路径。
+  const policy = withWritableRedirectRoot(loadPolicy());
   const decision = evaluateToolCall(call.toolName, call.toolInput, policy);
 
   // allow 且没有要改写的入参 = 本插件对该调用没有意见：

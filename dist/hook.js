@@ -8,6 +8,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
  */
 const guard_1 = require("./guard");
 const policy_1 = require("./policy");
+const pathguard_1 = require("./pathguard");
 const adapters_1 = require("./adapters");
 const logger_1 = require("./logger");
 function main() {
@@ -27,7 +28,9 @@ function main() {
     if (!call) {
         process.exit(0);
     }
-    const policy = (0, policy_1.loadPolicy)();
+    // 重定向根在受限环境里可能根本写不进去（沙箱只放行会话工作区），
+    // 换成真正可写的位置，否则拒绝理由和改写目标都指向一个走不通的路径。
+    const policy = (0, pathguard_1.withWritableRedirectRoot)((0, policy_1.loadPolicy)());
     const decision = (0, guard_1.evaluateToolCall)(call.toolName, call.toolInput, policy);
     // allow 且没有要改写的入参 = 本插件对该调用没有意见：
     // 必须保持沉默（不输出任何 JSON），否则 permissionDecision="allow" 会顶掉宿主自己的 ask/deny 决策。

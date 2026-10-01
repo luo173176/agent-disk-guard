@@ -4,7 +4,8 @@
  */
 export { loadPolicy, defaultPolicy, parseYamlSubset, resolvePolicyFilePath, type Policy } from "./policy";
 export { evaluateToolCall, type Decision } from "./guard";
-export { checkPath, computeRedirectPath, isReparsePoint } from "./pathguard";
+export { checkPath, computeRedirectPath, isReparsePoint, resolveWritableRedirectRoot, withWritableRedirectRoot } from "./pathguard";
+export { detectHost, type HostCapabilities } from "./host";
 export { rewriteCommand } from "./rewriters";
 export { buildEnvPlan, mergeMavenOpts, type EnvVar } from "./envplan";
 export { checkDisk, suggestCleanup, classifyFree, type DiskStatus } from "./monitor";

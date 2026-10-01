@@ -8,6 +8,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.evaluateToolCall = evaluateToolCall;
 const pathguard_1 = require("./pathguard");
 const rewriters_1 = require("./rewriters");
+const host_1 = require("./host");
 /** 写文件类工具与其路径字段（键一律小写，匹配时对工具名做 toLowerCase） */
 const FILE_TOOLS = {
     write: ["file_path"],
@@ -73,7 +74,7 @@ function matchCommandRule(command, policy) {
     return null;
 }
 /** 处理写文件类工具。 */
-function decideFileWrite(tool, input, policy) {
+function decideFileWrite(tool, input, policy, host) {
     const fields = FILE_TOOLS[tool] || ["file_path", "notebook_path", "path"];
     for (const field of fields) {
         const v = input[field];
@@ -91,12 +92,16 @@ function decideFileWrite(tool, input, policy) {
             case "deny":
                 return deny(check.matched?.mode
                     ? `${base}（系统目录，禁止写入）。`
-                    : `${base}（fileWriteMode=deny）。已拒绝写入。请把目标改到 D 盘，例如 ${check.redirectPath}`);
+                    : `${base}（fileWriteMode=deny）。已拒绝写入。请把目标改为 ${check.redirectPath} 后重试。`);
             case "ask":
                 return ask(`${base}（fileWriteMode=ask）。请与用户确认写入位置（建议 ${check.redirectPath}）`);
             case "redirect":
             default:
                 if (check.redirectPath) {
+                    // 宿主不采纳入参改写 → 「改写」唯一可用的形态是拒绝 + 把目标路径写进理由
+                    if (!host.updatedInput) {
+                        return deny(`${base}。当前宿主（${host.host}）不采纳 hook 的入参改写，请把目标改为 ${check.redirectPath} 后重试。`);
+                    }
                     return allowWith(input, `AgentDiskGuard 重定向：${v} → ${check.redirectPath}（原路径位于 C 盘受保护目录）`, { [field]: check.redirectPath });
                 }
                 return deny(`${base}。已拒绝写入。`);
@@ -105,7 +110,7 @@ function decideFileWrite(tool, input, policy) {
     return { action: "allow" };
 }
 /** 处理命令类工具。 */
-function decideCommand(tool, input, policy) {
+function decideCommand(tool, input, policy, host) {
     const fields = COMMAND_TOOLS[tool] || ["command", "cmd", "script"];
     for (const field of fields) {
         const v = input[field];
@@ -133,13 +138,18 @@ function decideCommand(tool, input, policy) {
                     return ask(`AgentDiskGuard 需确认：该命令将向 C 盘缓存写入（${rw.notes.join("；")}）。`);
                 case "rewrite":
                 default:
+                    // 宿主不采纳入参改写：改写后的命令只能交给模型重试，不能静默放行原命令
+                    if (!host.updatedInput) {
+                        return deny(`AgentDiskGuard 拦截：该命令会向 C 盘缓存写入（${rw.notes.join("；")}）。` +
+                            `当前宿主（${host.host}）不采纳 hook 的入参改写，请改用以下命令重试：\n${rw.command}`);
+                    }
                     return allowWith(input, `AgentDiskGuard 改写命令，缓存/依赖已指向 D 盘：${rw.notes.join("；")}`, { [field]: rw.command });
             }
         }
         if (rw.unrewritable) {
             // 命令会写 C 盘缓存，但它藏在包装器里（pwsh -Command "npm install"），无法安全注入参数：
-            // 不能默默放行，交给用户确认（deny 模式则直接拒绝）。
-            if (policy.commandMode === "deny")
+            // 不能默默放行。宿主不采纳改写时 ask 也没用（批准后原命令照跑，缓存照落 C 盘），只能拒绝。
+            if (policy.commandMode === "deny" || !host.updatedInput)
                 return deny(`AgentDiskGuard 拦截：${rw.notes.join("；")}`);
             return ask(`AgentDiskGuard 需确认：${rw.notes.join("；")}`);
         }
@@ -157,13 +167,14 @@ function decideCommand(tool, input, policy) {
 function evaluateToolCall(toolName, toolInput, policy) {
     const tool = (toolName || "").trim().toLowerCase();
     const input = toolInput && typeof toolInput === "object" ? toolInput : {};
+    const host = (0, host_1.detectHost)(policy);
     // 只读工具永不改写
     if (READ_TOOLS.has(tool))
         return { action: "allow" };
     if (COMMAND_TOOLS[tool])
-        return decideCommand(tool, input, policy);
+        return decideCommand(tool, input, policy, host);
     // 写文件工具与"任何入参里带路径字段的工具"共用同一条判定：
     // decideFileWrite 在工具名未知时会回落到 file_path/notebook_path/path，
     // 因此条目级 mode（系统目录固定 deny）在兜底路径上同样生效。
-    return decideFileWrite(tool, input, policy);
+    return decideFileWrite(tool, input, policy, host);
 }

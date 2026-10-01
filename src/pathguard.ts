@@ -6,7 +6,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { driveLetter, driveOf, expandEnv, isPathUnder, localizeUnc, normalizePath, realResolve, reparseTarget } from "./util";
+import { driveLetter, driveOf, expandEnv, isDirWritable, isPathUnder, localizeUnc, normalizePath, realResolve, reparseTarget } from "./util";
 import type { Policy, ProtectedPath } from "./policy";
 
 export interface PathCheckResult {
@@ -126,4 +126,26 @@ function judgePath(target: string, policy: Policy): PathCheckResult {
   }
 
   return { protected: false };
+}
+
+/**
+ * 解析真正可写的重定向根。
+ *
+ * 沙箱与 AI 宿主常常只放行会话工作区，策略里写死的 `D:\AgentCache` 可能根本写不进去；
+ * 那时「重定向」只是把一次失败挪成另一次失败，模型拿到的建议路径也是走不通的。
+ * 依次探测候选目录，取第一个真正可写的。探测不缓存：hook 是一次性进程，缓存反而更贵。
+ */
+export function resolveWritableRedirectRoot(policy: Policy): string {
+  const declared = normalizePath(policy.redirectRoot);
+  if (!policy.redirectRootFallback) return declared;
+  if (isDirWritable(declared)) return declared;
+  // 会话工作区：hook 的 cwd 就是它（claude-code 桥接契约），沙箱按定义放行这里
+  const fallback = normalizePath(path.join(process.cwd(), ".agent-cache"));
+  return isDirWritable(fallback) ? fallback : declared;
+}
+
+/** 把策略里的重定向根换成真正可写的位置；无变化时原样返回。 */
+export function withWritableRedirectRoot(policy: Policy): Policy {
+  const root = resolveWritableRedirectRoot(policy);
+  return root === policy.redirectRoot ? policy : { ...policy, redirectRoot: root };
 }

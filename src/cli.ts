@@ -15,13 +15,15 @@
 import * as fs from "fs";
 import * as path from "path";
 import { loadPolicy, resolvePolicyFilePath } from "./policy";
+import { resolveWritableRedirectRoot, withWritableRedirectRoot } from "./pathguard";
+import { detectHost } from "./host";
 import { evaluateToolCall, type Decision } from "./guard";
 import { buildEnvPlan, mergeMavenOpts } from "./envplan";
 import { checkDisk, cleanupAdvice, statusLine, suggestCleanup, type DiskStatus } from "./monitor";
 import { executeMigration, planMigration, purgeBackup, rollbackMigration } from "./migrate";
 import { readEntries } from "./journal";
 import { decisionToPreToolUseOutput, normalizeHookInput } from "./adapters";
-import { execSync, dataDir, ensureDir, humanBytes, normalizePath, readJson } from "./util";
+import { execSync, dataDir, ensureDir, humanBytes, isDirWritable, normalizePath, readJson } from "./util";
 import { configureLogging, logInfo } from "./logger";
 
 function usage(): string {
@@ -100,7 +102,8 @@ function cmdStatus(args: string[]): number {
 }
 
 function cmdCheck(args: string[]): number {
-  const policy = loadPolicy();
+  // 与 hook 保持一致：check 要能预报 hook 真正会给出的决策
+  const policy = withWritableRedirectRoot(loadPolicy());
   const toolArg = argValue(args, "--tool");
   const jsonArg = argValue(args, "--input-json");
   let call: { toolName: string; toolInput: Record<string, unknown> } | null = null;
@@ -275,17 +278,25 @@ function cmdDoctor(): number {
   const pf = resolvePolicyFilePath();
   checks.push(["策略文件可读", !!pf, pf ?? "使用内置默认策略"]);
   const root = normalizePath(policy.redirectRoot);
-  let rootOk = false;
-  try {
-    fs.mkdirSync(root, { recursive: true });
-    const probe = path.join(root, ".adg-probe");
-    fs.writeFileSync(probe, "ok");
-    fs.unlinkSync(probe);
-    rootOk = true;
-  } catch {
-    rootOk = false;
-  }
+  const rootOk = isDirWritable(root);
   checks.push([`redirectRoot 可写 (${root})`, rootOk, rootOk ? "ok" : "请确认盘符存在且有写权限"]);
+  if (!rootOk && policy.redirectRootFallback) {
+    const eff = resolveWritableRedirectRoot(policy);
+    checks.push([
+      `重定向根回退 (${eff})`,
+      eff !== root,
+      eff === root ? "回退目标也不可写：重定向无法落地，请为宿主放行缓存盘或改用 env 注入" : `hook 实际会使用 ${eff}`,
+    ]);
+  }
+  // 宿主能力：决定了「改写」到底以哪种形态送达（改入参 vs 拒绝+给命令）
+  const host = detectHost(policy);
+  checks.push([
+    `宿主 ${host.host}`,
+    true,
+    host.updatedInput
+      ? "采纳 hook 的入参改写：命令与路径会被自动重定向"
+      : "不采纳 hook 的入参改写：命令/路径重定向降级为「拒绝 + 在理由里给出改写后的命令」",
+  ]);
   const nodeOk = typeof process.versions.node === "string";
   checks.push(["Node 运行时", nodeOk, process.versions.node ?? ""]);
   // 受限令牌 / 低完整性沙箱里 spawnSync 可能连进程都起不来（status 恒为 null）：
@@ -326,7 +337,7 @@ function cmdDoctor(): number {
 }
 
 function cmdExec(args: string[]): number {
-  const policy = loadPolicy();
+  const policy = withWritableRedirectRoot(loadPolicy());
   const dd = args.indexOf("--");
   if (dd < 0 || dd + 1 >= args.length) {
     process.stderr.write("用法: agent-disk-guard exec -- <command...>\n");

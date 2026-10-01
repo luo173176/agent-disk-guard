@@ -6,3 +6,4 @@ Thumbs.db
 *.tsbuildinfo
 dist/**/*.map
 .npm-cache/
+.agent-cache/

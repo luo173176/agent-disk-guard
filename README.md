@@ -65,10 +65,15 @@ dsh plugin --profile <name> add <clone目录>
 dsh plugin add agent-disk-guard
 ```
 
-DSH 专属注意事项：
+DSH 专属注意事项（0.3.2 起基本由插件自动处理，无需手工改策略）：
 
-- DSH 的 Claude Code 桥接**不支持 `updatedInput`**（改写入参会被记录并忽略）。因此建议 DSH 用户把策略 `fileWriteMode` 设为 `deny`：守卫拒绝 C 盘写入并在模型可见的理由里给出 D 盘目标路径，模型会用新路径重试。`deny`/`ask` 决策被桥接完整尊重。
-- 命令缓存重定向在 DSH 上主要靠环境变量：先用 `install.ps1` 或 `agent-disk-guard env --set` 写入用户级变量，DSH 及其工具子进程会继承。
+- **宿主能力自动探测**：检测到 `DSH_SESSION_ID` / `DSH_HOME` / `DSH_PROFILE_DIR` / `DSH_SHELL` 任一环境变量，即判定为不采纳 `updatedInput` 的宿主（`doctor` 里显示 `宿主 deepseek-harness`）。探测结果决定 `redirect` / `rewrite` 决策的**送达形态**：
+  - 采纳改写的宿主（Claude Code / ZCode）→ `allow` + `updatedInput`，命令与路径自动重定向；
+  - 不采纳改写的宿主（DSH）→ `deny`，理由里直接给出**改写后的完整命令或目标路径**，模型照抄重试即可。
+- 这个降级不是锦上添花：旧版在 DSH 上返回 `allow + updatedInput`，桥接把改写入参记一条 warn 后丢弃，命令照原样执行，缓存还是落 C 盘——看起来拦住了，实际什么都没发生。
+- **重定向根自动回退**：`redirectRoot` 不可写时（盘不存在、无权限、或沙箱只放行会话工作区），hook 会回退到 `<会话工作区>\.agent-cache` 并把该路径写进理由，而不是给出一个根本写不进去的目标。设 `redirectRootFallback: false` 可关闭回退。
+- **SessionStart 主动告知运行态**：命中不采纳改写的宿主时，会话开头注入一条 additionalContext，说明「会写 C 盘缓存的命令必须显式带缓存参数」以及当前实际生效的缓存根。
+- 命令缓存仍建议配合用户级环境变量：`install.ps1` 或 `agent-disk-guard env --set` 写一次，DSH 及其工具子进程都会继承（这条通道不依赖 hook 改写）。
 - 桥接缺失时组合包会降级：加载不报错，只打警告，不影响 DSH 启动。
 
 ### 其他 Claude Code 系 Harness
@@ -92,9 +97,9 @@ agent-disk-guard doctor
 |---|---|---|---|---|
 | ZCode | ✅ | ✅ | ✅ `updatedInput` | ✅ `additionalContext` |
 | Claude Code | ✅ | ✅ | ✅ `updatedInput` | ✅ |
-| DeepSeek Harness（dsh.bundle + 官方 CC 桥接） | ✅ | ✅ | ❌ 桥接忽略 `updatedInput`，建议 `fileWriteMode: deny` | ✅ |
+| DeepSeek Harness（dsh.bundle + 官方 CC 桥接） | ✅ | ✅ | ⚠️ 桥接忽略 `updatedInput` → 自动降级为 `deny`，理由里给改写后的命令 | ✅ |
 
-> 不支持 `updatedInput` 的 Host 上，`redirect` 决策会退化为"放行 + 理由里提示新路径"；想强制拦截就把 `policy.yaml` 的 `fileWriteMode` 改成 `deny`。
+> 不支持 `updatedInput` 的 Host 上，0.3.2 起不再静默退化为"放行 + 提示新路径"，而是转成**带可执行命令的 `deny`**（旧行为是 `updatedInput` 被桥接丢弃后原命令照跑）。想手工覆盖宿主的自动探测，在 `policy.yaml` 里写 `hostCapabilities: auto`（默认）｜`updatedInput`｜`noUpdatedInput`。
 
 要求：Windows 10/11，Node.js ≥ 18（Hook 通过 `node` 运行，零依赖），重定向目标盘（如 `D:`）。
 
@@ -146,6 +151,8 @@ redirectRoot: "D:\\AgentCache"
 fileWriteMode: redirect   # redirect=自动改写到 D 盘 | deny=拒绝 | ask=询问 | off=不检查
 commandMode: rewrite      # rewrite=注入缓存参数 | deny=拒绝 | ask=询问 | off=不检查
 failOpen: true            # Hook 内部错误时放行，绝不拖死 Agent
+hostCapabilities: auto    # auto=按 DSH_* 环境变量探测宿主是否采纳改写入参 | updatedInput | noUpdatedInput
+redirectRootFallback: true # redirectRoot 不可写时回退到 <会话工作区>\.agent-cache（false 则不做回退）
 
 protectedPaths:
   - path: "%LOCALAPPDATA%\\Temp"
@@ -174,7 +181,9 @@ monitor:
 
 - **Junction 自动放行**：目录一旦迁移成 Junction（数据实际已在 D 盘），守卫检测到 reparse point 后不再拦截，用户不会被锁死；
 - **mirror 模式**：没有 `redirect` 名的受保护路径，重定向到 `<根>\mirror\home\<相对用户主目录>`；
-- **C 盘根散文件**（`C:\foo.txt`）也拦，防止 Agent 往盘根塞垃圾。
+- **C 盘根散文件**（`C:\foo.txt`）也拦，防止 Agent 往盘根塞垃圾；
+- **宿主能力**：`hostCapabilities: auto` 默认按 `DSH_*` 环境变量探测。不采纳改写入参的宿主上，`redirect` / `rewrite` 会转成 `deny` 并在理由里给出改写后的命令——把 `updatedInput` 交给这种宿主只会被桥接丢弃，原命令照跑；
+- **回退根**：`redirectRootFallback: true`（默认）下，`redirectRoot` 不可写时 hook 改用 `<会话工作区>\.agent-cache`；`agent-disk-guard doctor` 会显示探测到的宿主与实际使用的根。
 
 ## 命令一览
 

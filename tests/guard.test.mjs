@@ -28,6 +28,9 @@ function makePolicy(overrides = {}) {
     whitelist: [P("C:", "Users", "test", "keep")],
     commandRules: [{ pattern: "\\bformat\\s+[cC]:", action: "deny", reason: "禁止格式化系统盘" }],
     monitor: { enabled: true, warnGB: 20, criticalGB: 10, sessionStartCheck: true },
+    // 本文件测的是「改写」语义；改成 auto 会让 DSH 会话里探测出 noUpdatedInput 而全部降级为 deny
+    hostCapabilities: "updatedInput",
+    redirectRootFallback: true,
     failOpen: true,
   };
   return { ...base, ...overrides };

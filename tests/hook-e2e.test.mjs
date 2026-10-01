@@ -25,6 +25,10 @@ function writeTestPolicy(dir) {
     "fileWriteMode: redirect",
     "commandMode: rewrite",
     "failOpen: true",
+    // 子进程会继承 DSH_* 环境变量：显式声明宿主支持入参改写，并关掉重定向根回退，
+    // 否则断言测到的是「宿主降级」而不是「改写」（D:\AgentCache 在沙箱里不可写）
+    'hostCapabilities: "updatedInput"',
+    "redirectRootFallback: false",
     "protectedPaths:",
     '  - path: "C:\\\\Users\\\\test\\\\AppData\\\\Local\\\\Temp"',
     '    redirect: "temp"',
@@ -102,9 +106,9 @@ test("策略解析失败时回退内置默认（fail-open 不抛错）", () => {
     env: e2,
   });
   assert.equal(r.status, 0);
-  // 回退默认策略后 npm 仍会被改写
-  const out = JSON.parse(r.stdout);
-  assert.equal(out.hookSpecificOutput.updatedInput.command.includes("--cache"), true);
+  // 回退内置默认策略后 npm 仍被拦截：采纳改写的宿主给出 updatedInput，
+  // 不采纳改写的宿主（如 DSH）给出带改写命令的 deny —— 两种形态理由里都带 --cache
+  assert.match(r.stdout, /--cache/);
 });
 
 test("parseYamlSubset 与策略文件一致（冒烟）", () => {
