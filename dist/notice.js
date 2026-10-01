@@ -11,7 +11,7 @@ const logger_1 = require("./logger");
  */
 function buildSessionNotice(options = {}) {
     const { source = "startup" } = options;
-    const policy = options.policy ?? (0, pathguard_1.withWritableRedirectRoot)((0, policy_1.loadPolicy)(), options.cwd);
+    const policy = options.policy ?? (0, pathguard_1.withWritableRedirectRoot)((0, policy_1.loadPolicy)());
     const lines = [];
     if (policy.monitor.enabled && policy.monitor.sessionStartCheck) {
         const status = (0, monitor_1.checkDisk)(policy);

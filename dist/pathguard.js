@@ -166,22 +166,19 @@ function judgePath(target, policy) {
  *    的可写范围根本不是一回事（实测 DSH 下 hook 进程写不了任何地方，模型却能写会话工作区）。
  *    这时按宿主契约取会话工作区内的根 —— 探测只会给出错误答案。
  * 探测不缓存：hook 是一次性进程，缓存反而更贵。
- *
- * `cwd` 必须由调用方给出会话工作区。默认的 `process.cwd()` 只在 hook 进程里等于会话
- * 工作区（claude-code 桥接契约）；组合包跑在宿主进程内时，进程 cwd 是宿主自己的安装
- * 目录，据此算出来的根会在 C 盘上——实测就是这么错的。
  */
-function resolveWritableRedirectRoot(policy, cwd) {
+function resolveWritableRedirectRoot(policy) {
     const declared = (0, util_1.normalizePath)(policy.redirectRoot);
     if (!policy.redirectRootFallback)
         return declared;
-    const workspace = (0, util_1.normalizePath)(path.join(cwd ?? process.cwd(), ".agent-cache"));
+    // 会话工作区：hook 的 cwd 就是它（claude-code 桥接契约），宿主沙箱按定义放行这里
+    const workspace = (0, util_1.normalizePath)(path.join(process.cwd(), ".agent-cache"));
     if (!(0, host_1.detectHost)(policy).updatedInput)
         return workspace;
     return (0, util_1.isDirWritable)(declared) ? declared : workspace;
 }
 /** 把策略里的重定向根换成真正可写的位置；无变化时原样返回。 */
-function withWritableRedirectRoot(policy, cwd) {
-    const root = resolveWritableRedirectRoot(policy, cwd);
+function withWritableRedirectRoot(policy) {
+    const root = resolveWritableRedirectRoot(policy);
     return root === policy.redirectRoot ? policy : { ...policy, redirectRoot: root };
 }
