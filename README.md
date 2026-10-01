@@ -67,11 +67,11 @@ dsh plugin add agent-disk-guard
 
 DSH 专属注意事项（0.3.2 起基本由插件自动处理，无需手工改策略）：
 
-- **宿主能力自动探测**：检测到 `DSH_SESSION_ID` / `DSH_HOME` / `DSH_PROFILE_DIR` / `DSH_SHELL` 任一环境变量，即判定为不采纳 `updatedInput` 的宿主（`doctor` 里显示 `宿主 deepseek-harness`）。探测结果决定 `redirect` / `rewrite` 决策的**送达形态**：
+- **宿主能力自动探测**：命中 `DSH_SESSION_ID` / `DSH_HOME` / `DSH_PROFILE_DIR` / `DSH_SHELL` 任一环境变量，或 `ELECTRON_RUN_AS_NODE=1`，即判定为不采纳 `updatedInput` 的宿主（`doctor` 里显示 `宿主 deepseek-harness`）。**实际生效的是后者**：桥接 spawn 出来的 hook 进程拿不到 `DSH_*`（它们只注入给 shell 工具自身），只继承了 Electron 主进程的引导标记。探测结果决定 `redirect` / `rewrite` 决策的**送达形态**：
   - 采纳改写的宿主（Claude Code / ZCode）→ `allow` + `updatedInput`，命令与路径自动重定向；
   - 不采纳改写的宿主（DSH）→ `deny`，理由里直接给出**改写后的完整命令或目标路径**，模型照抄重试即可。
 - 这个降级不是锦上添花：旧版在 DSH 上返回 `allow + updatedInput`，桥接把改写入参记一条 warn 后丢弃，命令照原样执行，缓存还是落 C 盘——看起来拦住了，实际什么都没发生。
-- **重定向根自动回退**：`redirectRoot` 不可写时（盘不存在、无权限、或沙箱只放行会话工作区），hook 会回退到 `<会话工作区>\.agent-cache` 并把该路径写进理由，而不是给出一个根本写不进去的目标。设 `redirectRootFallback: false` 可关闭回退。
+- **重定向根自动回退**：不采纳改写的宿主（DSH）下，理由里的路径是交给**模型**去执行的，而模型的可写范围由宿主沙箱决定 —— 所以这时直接采用 `<会话工作区>\.agent-cache`，不采信 hook 侧的可写性探测（hook 进程的可写范围与模型毫无关系，实测 hook 在 DSH 沙箱下连会话工作区都写不进去）。采纳改写的宿主仍按 `redirectRoot` 的可写性回退。设 `redirectRootFallback: false` 可关闭全部回退。
 - **SessionStart 主动告知运行态**：命中不采纳改写的宿主时，会话开头注入一条 additionalContext，说明「会写 C 盘缓存的命令必须显式带缓存参数」以及当前实际生效的缓存根。
 - 命令缓存仍建议配合用户级环境变量：`install.ps1` 或 `agent-disk-guard env --set` 写一次，DSH 及其工具子进程都会继承（这条通道不依赖 hook 改写）。
 - 桥接缺失时组合包会降级：加载不报错，只打警告，不影响 DSH 启动。

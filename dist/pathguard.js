@@ -47,6 +47,7 @@ exports.withWritableRedirectRoot = withWritableRedirectRoot;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const util_1 = require("./util");
+const host_1 = require("./host");
 /** 是否为 reparse point（junction / symlink）。读取失败视为否。 */
 function isReparsePoint(p) {
     try {
@@ -158,17 +159,23 @@ function judgePath(target, policy) {
  *
  * 沙箱与 AI 宿主常常只放行会话工作区，策略里写死的 `D:\AgentCache` 可能根本写不进去；
  * 那时「重定向」只是把一次失败挪成另一次失败，模型拿到的建议路径也是走不通的。
- * 依次探测候选目录，取第一个真正可写的。探测不缓存：hook 是一次性进程，缓存反而更贵。
+ *
+ * 关键区别在于「谁去写」：
+ *  - 采纳 updatedInput 的宿主由 hook 自己重写路径，所以按 hook 侧的可写性挑根；
+ *  - 不采纳的宿主把路径原样交给**模型**，而模型的可写范围由宿主沙箱决定，与 hook 进程
+ *    的可写范围根本不是一回事（实测 DSH 下 hook 进程写不了任何地方，模型却能写会话工作区）。
+ *    这时按宿主契约取会话工作区内的根 —— 探测只会给出错误答案。
+ * 探测不缓存：hook 是一次性进程，缓存反而更贵。
  */
 function resolveWritableRedirectRoot(policy) {
     const declared = (0, util_1.normalizePath)(policy.redirectRoot);
     if (!policy.redirectRootFallback)
         return declared;
-    if ((0, util_1.isDirWritable)(declared))
-        return declared;
-    // 会话工作区：hook 的 cwd 就是它（claude-code 桥接契约），沙箱按定义放行这里
-    const fallback = (0, util_1.normalizePath)(path.join(process.cwd(), ".agent-cache"));
-    return (0, util_1.isDirWritable)(fallback) ? fallback : declared;
+    // 会话工作区：hook 的 cwd 就是它（claude-code 桥接契约），宿主沙箱按定义放行这里
+    const workspace = (0, util_1.normalizePath)(path.join(process.cwd(), ".agent-cache"));
+    if (!(0, host_1.detectHost)(policy).updatedInput)
+        return workspace;
+    return (0, util_1.isDirWritable)(declared) ? declared : workspace;
 }
 /** 把策略里的重定向根换成真正可写的位置；无变化时原样返回。 */
 function withWritableRedirectRoot(policy) {

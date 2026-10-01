@@ -14,12 +14,23 @@ import { evaluateToolCall } from "../dist/guard.js";
 import { detectHost } from "../dist/host.js";
 import { resolveWritableRedirectRoot, withWritableRedirectRoot } from "../dist/pathguard.js";
 
-const DSH_KEYS = ["DSH_SESSION_ID", "DSH_HOME", "DSH_PROFILE_DIR", "DSH_SHELL"];
+/**
+ * 影响宿主探测的环境变量：DSH 自己的标记，加上 Electron 引导标记。
+ * 后者是 hook 进程里唯一可见的 DSH 信号（实测：桥接收缩环境时剥掉了 DSH_*），
+ * 所以必须一起清掉，否则「非 DSH 宿主」用例会在 Electron 宿主里误判。
+ */
+const HOST_KEYS = [
+  "DSH_SESSION_ID",
+  "DSH_HOME",
+  "DSH_PROFILE_DIR",
+  "DSH_SHELL",
+  "ELECTRON_RUN_AS_NODE",
+];
 
-/** 在指定宿主环境下执行 fn，结束后恢复 DSH_* 环境变量。 */
+/** 在指定宿主环境下执行 fn，结束后恢复相关环境变量。 */
 function withEnv(vars, fn) {
-  const saved = DSH_KEYS.map((k) => [k, process.env[k]]);
-  for (const k of DSH_KEYS) delete process.env[k];
+  const saved = HOST_KEYS.map((k) => [k, process.env[k]]);
+  for (const k of HOST_KEYS) delete process.env[k];
   Object.assign(process.env, vars);
   try {
     return fn();
@@ -50,6 +61,14 @@ test("DSH 环境被识别为不采纳 updatedInput 的宿主", () => {
 test("无 DSH 标记的宿主按采纳 updatedInput 处理", () => {
   withEnv({}, () => {
     assert.equal(detectHost().updatedInput, true);
+  });
+});
+
+test("只有 Electron 引导标记时也识别为 DSH（桥接剥掉 DSH_* 之后的实测形态）", () => {
+  withEnv({ ELECTRON_RUN_AS_NODE: "1" }, () => {
+    const host = detectHost();
+    assert.equal(host.updatedInput, false);
+    assert.equal(host.host, "deepseek-harness");
   });
 });
 
