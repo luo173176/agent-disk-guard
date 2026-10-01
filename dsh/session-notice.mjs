@@ -64,13 +64,18 @@ export function installSessionNotice(ctx, { pkgRoot }) {
     return
   }
 
+  // 幂等按会话记账，不按 agent：同一会话里先后建出多个 agent（主 agent 与子 agent）时，
+  // 按 agent 记账会让同一段提示在对话里出现两遍——实测就是这么冒出来的。
   const noticed = new Set()
+  const keyOf = (agent) => agent?.session?.id ?? agent?.id
   const take = (agent) => {
-    const key = agent?.id
+    const key = keyOf(agent)
     if (key === undefined || noticed.has(key)) return undefined
-    // detectHost 读的是 hook 子进程的环境；这里跑在 DSH 宿主进程内，直接按已知事实给答案
     const lines = buildSessionNotice({
       source: 'dsh-plugin',
+      // 宿主进程的 cwd 是宿主自己的安装目录，不是会话工作区，只能从 agent 上取
+      cwd: agent?.session?.header?.cwd,
+      // detectHost 读的是 hook 子进程的环境；这里跑在 DSH 宿主进程内，直接按已知事实给答案
       host: { host: 'deepseek-harness', updatedInput: false },
     })
     noticed.add(key)
@@ -83,7 +88,7 @@ export function installSessionNotice(ctx, { pkgRoot }) {
     try {
       agent.inject(message)
     } catch (e) {
-      noticed.delete(agent?.id) // 交给 pre-step 再试一次
+      noticed.delete(keyOf(agent)) // 交给 pre-step 再试一次
       warn(ctx, `会话启动提示注入失败：${e?.message ?? e}`)
     }
   })

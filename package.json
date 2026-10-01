@@ -1,6 +1,6 @@
 {
   "name": "agent-disk-guard",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "AgentDiskGuard — prevent AI coding agents (Claude Code, ZCode, DeepSeek Harness, ...) from filling up drive C: (hook interception, cache redirection, env injection, robocopy+junction migration, disk monitoring).",
   "author": "luo173176",
   "license": "MIT",

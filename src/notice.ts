@@ -20,6 +20,12 @@ export interface SessionNoticeOptions {
   host?: HostCapabilities;
   /** 已加载的策略；缺省时自行 loadPolicy 并选定可写的重定向根 */
   policy?: Policy;
+  /**
+   * 会话工作区。缺省回退到 `process.cwd()`（hook 进程里就是它），
+   * 但跑在宿主进程内的调用方必须显式给出 `agent.session.header.cwd`——
+   * 宿主进程的 cwd 是它自己的安装目录，据此算出的缓存根会落回 C 盘。
+   */
+  cwd?: string;
 }
 
 /**
@@ -27,7 +33,7 @@ export interface SessionNoticeOptions {
  */
 export function buildSessionNotice(options: SessionNoticeOptions = {}): string[] {
   const { source = "startup" } = options;
-  const policy = options.policy ?? withWritableRedirectRoot(loadPolicy());
+  const policy = options.policy ?? withWritableRedirectRoot(loadPolicy(), options.cwd);
   const lines: string[] = [];
 
   if (policy.monitor.enabled && policy.monitor.sessionStartCheck) {

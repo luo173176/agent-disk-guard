@@ -28,9 +28,12 @@ function fakeCtx() {
   };
 }
 
-function fakeAgent(id, injected) {
+function fakeAgent(id, injected, cwd, sessionId = id) {
   return {
     id,
+    // session.id 是幂等键；session.header.cwd 是重定向根的来源——宿主进程的 process.cwd()
+    // 是宿主自己的安装目录，据它算出来的缓存根会落回 C 盘（真机上就是这么错的）。
+    session: { id: sessionId, header: cwd ? { cwd } : {} },
     inbox: { processing: true },
     inject: (message) => injected.push(message),
   };
@@ -113,4 +116,26 @@ test('pre-step 非 enter 时原样返回，不追加消息', async () => {
     async () => downstream
   );
   assert.equal(result, downstream);
+});
+
+test('同一会话里的第二个 agent 不再重复注入', async () => {
+  const ctx = await setup();
+  const injected = [];
+  const sessionId = 's-shared';
+  ctx.listeners.get('agent/created')({ agent: fakeAgent('sub-agent', injected, 'D:\\ws', sessionId) });
+  ctx.listeners.get('agent/created')({ agent: fakeAgent('main-agent', injected, 'D:\\ws', sessionId) });
+  assert.equal(injected.length, 1, '幂等键是会话，不是 agent');
+});
+
+test('提示里的缓存根取自 agent 的会话工作区，而非宿主进程 cwd', async () => {
+  const ctx = await setup();
+  const injected = [];
+  ctx.listeners.get('agent/created')({ agent: fakeAgent('a-cwd', injected, 'D:\\some\\workspace') });
+  assert.equal(injected.length, 1);
+  assert.match(
+    injected[0].content[0].text,
+    /D:\\some\\workspace\\\.agent-cache/,
+    '缓存根必须落在会话工作区内'
+  );
+  assert.doesNotMatch(injected[0].content[0].text, /\.dsh\\profiles/);
 });
