@@ -7,11 +7,26 @@
  *   2. %USERPROFILE%\.agent-disk-guard\policy.yaml（install.ps1 生成，用户可编辑）
  *   3. 插件自带 config/policy.yaml（只读兜底）
  *   4. 内置默认值
+ *
+ * 注意：只覆盖 YAML 子集——支持映射/列表/标量/注释/流程列表，不支持流程映射（`{a: b}`）
+ * 与多行块标量（`|` / `>`）；请用块式写法，字符串里的反斜杠/引号在双引号内转义。
  */
 import * as fs from "fs";
 import * as path from "path";
 import { dataDir, expandEnv, homeDir, normalizePath } from "./util";
 import { logWarn } from "./logger";
+
+/** 最近一次策略解析失败的信息（供会话提示/诊断使用）；成功或未命中文件时为 null。 */
+export interface PolicyLoadError {
+  file: string;
+  error: string;
+}
+let lastPolicyError: PolicyLoadError | null = null;
+
+/** 读取最近一次 loadPolicy 的解析失败信息（无失败返回 null）。 */
+export function getLastPolicyError(): PolicyLoadError | null {
+  return lastPolicyError;
+}
 
 // ---------------------------------------------------------------------------
 // YAML 子集解析器
@@ -354,6 +369,7 @@ export function resolvePolicyFilePath(): string | null {
  * 解析失败时告警并回退内置默认（fail-open，不阻断 Agent）。
  */
 export function loadPolicy(): Policy {
+  lastPolicyError = null;
   const file = resolvePolicyFilePath();
   if (file) {
     try {
@@ -362,6 +378,7 @@ export function loadPolicy(): Policy {
         return materialize({ ...defaultPolicyObject(), ...(parsed as Record<string, unknown>) });
       }
     } catch (e) {
+      lastPolicyError = { file, error: String(e) };
       logWarn(`policy 解析失败，使用内置默认策略: ${file}`, { error: String(e) });
     }
   }

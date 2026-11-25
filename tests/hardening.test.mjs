@@ -23,6 +23,11 @@ const P = (...seg) => seg.join(BS);
 const HOME = os.homedir();
 const HOME_TEMP = P(HOME, "AppData", "Local", "Temp");
 
+// 部分用例依赖「用户主目录在 C 盘 / 8.3 短名 / 真实磁盘探测」，属宿主文件系统行为，
+// 非 Windows 上无法复现；按平台条件跳过并注明（CI 的 ubuntu 任务据此保持绿色）。
+const isWin = process.platform === "win32";
+const skipNonWin = (why) => (isWin ? false : `非 Windows 环境跳过：${why}`);
+
 // 找可写的工作目录（不用 mkdtemp：受限令牌/沙箱下 mkdtemp 与系统临时目录都可能被拒），
 // journal 也写在这里，避免污染真实数据目录。
 function pickWorkDir() {
@@ -64,13 +69,13 @@ test("A1 `..` 折叠后仍判定为受保护", () => {
   assert.equal(checkPath(P("C:", "foo", "..", "Windows", "System32", "x.txt"), policy).protected, true);
 });
 
-test("A2 `..` 越出保护目录后折叠到真实位置（Temp 上溯 5 层 = C:\\Windows）", () => {
+test("A2 `..` 越出保护目录后折叠到真实位置（Temp 上溯 5 层 = C:\\Windows）", { skip: skipNonWin("依赖用户主目录在 C 盘") }, () => {
   const r = checkPath(`${HOME_TEMP}${BS}..${BS}..${BS}..${BS}..${BS}..${BS}Windows${BS}x.exe`, policy);
   assert.equal(r.protected, true);
   assert.match(r.reason || "", /Windows/);
 });
 
-test("A2b redirect 目标已折叠，不含 `..`", () => {
+test("A2b redirect 目标已折叠，不含 `..`", { skip: skipNonWin("依赖用户主目录在 C 盘") }, () => {
   const r = checkPath(`${HOME_TEMP}${BS}sub${BS}..${BS}adg-x.txt`, redirectPolicy);
   assert.equal(r.protected, true);
   assert.ok(!String(r.redirectPath || "").includes(".."), `redirectPath 仍含 ..: ${r.redirectPath}`);
@@ -92,7 +97,7 @@ test("A6 本机 UNC（127.0.0.1）映射为盘符", () => {
   assert.equal(checkPath(P("\\\\127.0.0.1\\c$", "Windows", "x.txt"), policy).protected, true);
 });
 
-test("A7 8.3 短名（PROGRA~1）经 realpath 命中", () => {
+test("A7 8.3 短名（PROGRA~1）经 realpath 命中", { skip: skipNonWin("依赖真实文件系统 8.3 短名") }, () => {
   assert.equal(checkPath(P("C:\\PROGRA~1", "adg-x.txt"), policy).protected, true);
 });
 
@@ -135,7 +140,7 @@ test("B5 小写 write 命中系统目录 → 不因 redirect 模式而放行", (
   assert.equal(evaluateToolCall("write", { file_path: P("C:", "Windows", "adg-x.txt") }, redirectPolicy).action, "deny");
 });
 
-test("B6 小写 write 命中临时目录（redirect）→ 改写路径", () => {
+test("B6 小写 write 命中临时目录（redirect）→ 改写路径", { skip: skipNonWin("依赖用户主目录在 C 盘") }, () => {
   const src = P(HOME_TEMP, "adg-x.txt");
   const d = evaluateToolCall("write", { file_path: src }, redirectPolicy);
   assert.equal(d.action, "allow");
@@ -188,7 +193,7 @@ test("C5 嵌套命令在 rewrite 模式下 → ask（不静默放行）", () => 
 // D. 磁盘查询
 // ---------------------------------------------------------------------------
 
-test("D1 checkDisk 走 statfs，level=ok 且有可用字节数", () => {
+test("D1 checkDisk 走 statfs，level=ok 且有可用字节数", { skip: skipNonWin("依赖真实磁盘与 C 盘") }, () => {
   const s = checkDisk(policy);
   assert.equal(s.level, "ok", statusLine(s));
   assert.ok(s.freeBytes > 0 && s.totalBytes > 0, statusLine(s));

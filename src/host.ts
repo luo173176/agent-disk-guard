@@ -34,6 +34,13 @@ export function isDeepSeekHarness(): boolean {
   );
 }
 
+/**
+ * 宿主能力探测。
+ *
+ * 注意：某些环境会把 `ELECTRON_RUN_AS_NODE=1` 残留在非 DSH 的 Electron 进程里，
+ * 造成「误判为 DSH（不采纳 updatedInput）」。遇到误判用策略项强制覆盖自动探测：
+ * `hostCapabilities: updatedInput`（强制认为采纳）或 `noUpdatedInput`（强制降级为拒绝+给命令）。
+ */
 export function detectHost(policy?: Pick<Policy, "hostCapabilities">): HostCapabilities {
   const override = policy?.hostCapabilities ?? "auto";
   if (override === "updatedInput") return { host: "forced-updated-input", updatedInput: true };

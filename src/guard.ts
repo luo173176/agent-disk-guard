@@ -6,7 +6,7 @@
 
 import type { Policy } from "./policy";
 import { checkPath } from "./pathguard";
-import { rewriteCommand } from "./rewriters";
+import { rewriteCommand, findProtectedWriteTargets } from "./rewriters";
 import { detectHost, type HostCapabilities } from "./host";
 
 export type DecisionAction = "allow" | "deny" | "ask";
@@ -147,6 +147,28 @@ function decideCommand(tool: string, input: Record<string, unknown>, policy: Pol
 
     // 2) 命令模式
     if (policy.commandMode === "off") return { action: "allow" };
+
+    // 2.5) 命令里写受保护路径的字面量（重定向 / 写 cmdlet）——即便不是包管理命令也要管住。
+    //      hook 只改写包管理缓存参数，`echo hi > C:\Temp\x.txt` / Copy-Item / Set-Content 等会被无视。
+    const protectedWrites = findProtectedWriteTargets(v, policy);
+    if (protectedWrites.length > 0) {
+      const desc = protectedWrites
+        .map((h) => (h.redirectPath ? `"${h.raw}" → ${h.redirectPath}` : `"${h.raw}"`))
+        .join("；");
+      switch (policy.commandMode) {
+        case "deny":
+          return deny(`AgentDiskGuard 拦截：命令写入了受保护位置（${desc}）。请改用目标盘路径后重试。`);
+        case "ask":
+          return ask(`AgentDiskGuard 需确认：命令将写入受保护位置（${desc}）。`);
+        case "rewrite":
+        default:
+          // 无法安全改写命令内部的路径字面量 → 降级为拒绝 + 给出建议路径（不静默放行）
+          return deny(
+            `AgentDiskGuard 拦截：命令写入了受保护位置（${desc}）。` +
+              `无法安全自动改写命令内的路径字面量，请把目标改为建议路径后重试。`
+          );
+      }
+    }
 
     const rw = rewriteCommand(v, policy);
     if (rw.changed) {

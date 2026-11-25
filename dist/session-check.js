@@ -5,7 +5,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
  *
  * 只做 I/O：读宿主载荷、把提示文本包成 additionalContext JSON 写到 stdout。
  * 文本本身由 ./notice 生成，与 DSH 组合包的会话内注入共用一份实现。
- * 单次 PowerShell 查询约 200-500ms，仅在会话启动时发生一次。
+ * 空间检查优先用 fs.statfsSync（纯 libuv，无子进程；见 util.getDriveSpace），仅在不可用时
+ * 才回落一次 PowerShell/CIM 查询；整个过程只在会话启动时发生一次。
  */
 const adapters_1 = require("./adapters");
 const logger_1 = require("./logger");

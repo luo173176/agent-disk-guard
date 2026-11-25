@@ -93,13 +93,35 @@ function splitSegments(cmd: string): string[] {
 
 const isSeparator = (s: string) => /^(\r?\n|&&|\|\||;|\|)$/.test(s);
 
-/** 该 npm 调用是否会写缓存（子命令属于会下载/落盘的那批才算）。 */
-function npmWritesCache(segment: string): boolean {
-  for (const t of segment.trim().split(/\s+/).slice(1)) {
-    if (t.startsWith("-")) continue;
-    if (NPM_CACHE_SUBCOMMANDS.has(t.toLowerCase())) return true;
+/**
+ * 会吃掉下一个 token 作为取值的 npm 全局参数。判定子命令时必须跳过它们的取值，
+ * 否则 `npm --prefix ./app install` 会把 `./app` 当成子命令、而 `npm run install` 又把 run 之后误当子命令。
+ */
+const NPM_VALUE_FLAGS = new Set([
+  "--prefix", "-c", "--cache", "--userconfig", "--globalconfig", "--registry",
+  "--tag", "--otp", "--workspace", "-w", "--loglevel", "--depth", "--scope",
+  "--before", "--since", "--location",
+]);
+
+/** 取 npm 的真实子命令（第一个非选项 token），选项的取值一并跳过。 */
+function npmSubcommand(segment: string): string | null {
+  const toks = segment.trim().split(/\s+/).slice(1);
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t === "--") return i + 1 < toks.length ? toks[i + 1].toLowerCase() : null;
+    if (t.startsWith("-")) {
+      if (!t.includes("=") && NPM_VALUE_FLAGS.has(t.toLowerCase())) i++; // 跳过选项取值
+      continue;
+    }
+    return t.toLowerCase();
   }
-  return false;
+  return null;
+}
+
+/** 该 npm 调用是否会写缓存（仅当第一个非选项 token 属于会下载/落盘的子命令）。 */
+function npmWritesCache(segment: string): boolean {
+  const sub = npmSubcommand(segment);
+  return sub !== null && NPM_CACHE_SUBCOMMANDS.has(sub);
 }
 
 /**
@@ -251,4 +273,71 @@ export function rewriteCommand(command: string, policy: Policy): CommandRewriteR
   });
   const result = out.join("");
   return { command: result, changed: result !== command, notes: [...new Set(notes)], unrewritable };
+}
+
+// ---------------------------------------------------------------------------
+// 命令中的受保护路径字面量（写通道检测）
+// ---------------------------------------------------------------------------
+
+/** 会把某个路径参数当作「写入目标」的动词 / cmdlet（大小写不敏感）。 */
+const WRITE_VERBS =
+  /\b(Out-File|Set-Content|Add-Content|Clear-Content|Copy-Item|Move-Item|Rename-Item|New-Item|tee|tee-object|Set-Item|Export-Csv|Export-Clixml|cp|mv|copy|move|robocopy|xcopy)\b/i;
+
+/** 从一段命令里提取 Windows 绝对路径字面量（盘符或 UNC，正/反斜杠都算）。 */
+function extractPathLiterals(segment: string): string[] {
+  const re = /[A-Za-z]:[\\/][^\s"'<>|&;),]*|\\\\[^\s"'<>|&;),]+/g;
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(segment))) {
+    const raw = m[0].replace(/[.,;]+$/, "");
+    if (raw) out.push(raw);
+  }
+  return out;
+}
+
+export interface ProtectedWriteHit {
+  raw: string;
+  redirectPath?: string;
+  reason?: string;
+}
+
+/**
+ * 找出命令里「写入受保护位置」的路径字面量。
+ *
+ * 只认写通道，避免把读命令（`Get-Content C:\Temp\x`）误判：
+ *  - 重定向目标：`>` / `>>`（含 `1>` `2>` `&>`）后面的路径；
+ *  - 写动词/cmdlet 的路径参数：Out-File / Set-Content / Add-Content / Copy-Item / Move-Item / tee 等；
+ *    Copy/Move 这类「源 → 目标」取最后一个路径作为写入目标。
+ * 命中后交给调用方按 commandMode 处理（rewrite 无法安全改写时降级为拒绝并给建议路径）。
+ */
+export function findProtectedWriteTargets(command: string, policy: Policy): ProtectedWriteHit[] {
+  const hits: ProtectedWriteHit[] = [];
+  const seen = new Set<string>();
+  const add = (raw: string): void => {
+    if (!raw || seen.has(raw.toLowerCase())) return;
+    const c = checkPath(raw, policy);
+    if (c.protected) {
+      seen.add(raw.toLowerCase());
+      hits.push({ raw, redirectPath: c.redirectPath, reason: c.reason });
+    }
+  };
+
+  for (const seg of splitSegments(command)) {
+    if (isSeparator(seg)) continue;
+
+    // 1) 重定向目标（> / >> / 1> / 2> / &>）
+    const redir = /[0-9&]?>{1,2}\s*(?:"([^"]+)"|'([^']+)'|([^\s|&;<>]+))/g;
+    let m: RegExpExecArray | null;
+    while ((m = redir.exec(seg))) add(m[1] ?? m[2] ?? m[3] ?? "");
+
+    // 2) 写动词 / cmdlet 的路径参数
+    if (WRITE_VERBS.test(seg)) {
+      const lits = extractPathLiterals(seg);
+      // 源 → 目标：只把最后一个路径当写入目标，别把「从受保护处读」误判成写
+      const isCopyMove = /\b(Copy-Item|Move-Item|cp|mv|copy|move|robocopy|xcopy)\b/i.test(seg);
+      const targets = isCopyMove && lits.length >= 2 ? [lits[lits.length - 1]] : lits;
+      for (const t of targets) add(t);
+    }
+  }
+  return hits;
 }

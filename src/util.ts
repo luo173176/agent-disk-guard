@@ -97,6 +97,17 @@ export function isPathUnder(child: string, ancestor: string): boolean {
   return c.startsWith(a);
 }
 
+/**
+ * 判断是否为 Windows 绝对路径（纯字符串，不依赖宿主平台）。
+ * 覆盖盘符绝对（`C:\` / `C:/`）、UNC（`\\server\share`）与根相对（`\foo` / `/foo`）。
+ * 这样在 Linux 上对 `C:\...` 的判定与 Windows 完全一致，而不会被 `path.isAbsolute`
+ * 当成相对路径再用 POSIX 规则 `path.resolve` 拼到 cwd 上。
+ */
+export function isWinAbsolutePath(p: string): boolean {
+  const s = (p || "").trim();
+  return /^[A-Za-z]:[\\/]/.test(s) || /^\\\\/.test(s) || /^[\\/]/.test(s);
+}
+
 /** 提取盘符（大写）；非 Windows 盘符格式返回 null。本机 UNC 写法（\\localhost\c$\x）等同于 C:\x。 */
 export function driveOf(p: string): string | null {
   const m = localizeUnc(p).match(/^([A-Za-z]):\\/);
@@ -114,8 +125,9 @@ export function realResolve(p: string): string | null {
     /* 目标不存在，尝试父目录 */
   }
   try {
-    const dir = path.dirname(p);
-    if (dir && dir !== p) return path.join(fs.realpathSync.native(dir), path.basename(p));
+    // 用 win32 语义拆分：非 Windows 上 `path.dirname("C:\\a\\b")` 会按 POSIX 解析出错
+    const dir = path.win32.dirname(p);
+    if (dir && dir !== p) return path.win32.join(fs.realpathSync.native(dir), path.win32.basename(p));
   } catch {
     /* 父目录也不可解析（例如整条路径都不存在） */
   }

@@ -6,7 +6,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { driveLetter, driveOf, expandEnv, isDirWritable, isPathUnder, localizeUnc, normalizePath, realResolve, reparseTarget } from "./util";
+import { driveLetter, driveOf, expandEnv, isDirWritable, isPathUnder, isWinAbsolutePath, localizeUnc, normalizePath, realResolve, reparseTarget } from "./util";
 import type { Policy, ProtectedPath } from "./policy";
 import { detectHost } from "./host";
 
@@ -76,7 +76,9 @@ export function checkPath(target: string, policy: Policy): PathCheckResult {
   const raw = expandEnv(String(target ?? "")).trim();
   if (!raw) return { protected: false };
 
-  const abs = path.isAbsolute(raw) ? raw : path.resolve(raw);
+  // 用 Windows 语义判断绝对路径：非 Windows 上 path.isAbsolute("C:\\x") 为 false，
+  // 会把 C 盘路径错误地 path.resolve 成 posix 相对路径。isWinAbsolutePath 是纯字符串判定。
+  const abs = isWinAbsolutePath(raw) ? raw : path.resolve(raw);
   const direct = judgePath(abs, policy);
   if (direct.protected) return direct;
 
@@ -143,12 +145,24 @@ function judgePath(target: string, policy: Policy): PathCheckResult {
  * 探测不缓存：hook 是一次性进程，缓存反而更贵。
  */
 export function resolveWritableRedirectRoot(policy: Policy): string {
-  const declared = normalizePath(policy.redirectRoot);
+  const declared = policy.redirectRoot;
   if (!policy.redirectRootFallback) return declared;
-  // 会话工作区：hook 的 cwd 就是它（claude-code 桥接契约），宿主沙箱按定义放行这里
-  const workspace = normalizePath(path.join(process.cwd(), ".agent-cache"));
-  if (!detectHost(policy).updatedInput) return workspace;
-  return isDirWritable(declared) ? declared : workspace;
+  // 会话工作区：hook 的 cwd 就是它（claude-code 桥接契约），宿主沙箱按定义放行这里。
+  // 用宿主原生 path.join（不套 normalizePath），这样在非 Windows 上也是合法的 POSIX 路径。
+  const workspace = path.join(process.cwd(), ".agent-cache");
+  // 不采纳改写的宿主：模型自己写会话工作区；先把目录建出来，保证给出的建议路径真实存在。
+  if (!detectHost(policy).updatedInput) return ensureWorkspace(workspace);
+  return isDirWritable(declared) ? declared : ensureWorkspace(workspace);
+}
+
+/** 尽力创建目录（沙箱下可能失败，失败也不阻断，原样返回）。 */
+function ensureWorkspace(dir: string): string {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    /* 建不出来就交给模型/宿主自行处理 */
+  }
+  return dir;
 }
 
 /** 把策略里的重定向根换成真正可写的位置；无变化时原样返回。 */

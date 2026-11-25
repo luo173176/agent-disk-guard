@@ -20,6 +20,10 @@ const CLI = path.join(__dirname, "..", "dist", "cli.js");
 const BS = String.fromCharCode(92);
 const P = (...seg) => seg.join(BS);
 
+// 真实磁盘/CLI 冒烟用例依赖 Windows 的 C 盘与 PowerShell，非 Windows 上跳过并注明。
+const isWin = process.platform === "win32";
+const skipNonWin = (why) => (isWin ? false : `非 Windows 环境跳过：${why}`);
+
 test("场景3：模拟 C 盘低于 10GB → critical + 建议", () => {
   const policy = defaultPolicy();
   assert.equal(classifyFree(9 * 1024 ** 3, policy), "critical");
@@ -29,7 +33,7 @@ test("场景3：模拟 C 盘低于 10GB → critical + 建议", () => {
   assert.equal(line.includes("🚨"), true);
 });
 
-test("monitor --once 以真实磁盘运行（冒烟）", () => {
+test("monitor --once 以真实磁盘运行（冒烟）", { skip: skipNonWin("依赖真实磁盘与 PowerShell") }, () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "adg-mon-"));
   fs.writeFileSync(path.join(tmp, "policy.yaml"), "monitor:\n  enabled: true\n  warnGB: 1\n  criticalGB: 0\n", "utf8");
   const r = spawnSync("node", [CLI, "monitor", "--once"], {
@@ -79,7 +83,7 @@ test("cleanupAdvice 输出可执行命令", () => {
   assert.equal(advice[0].includes("agent-disk-guard migrate"), true);
 });
 
-test("CLI status 正常返回（真实环境冒烟）", () => {
+test("CLI status 正常返回（真实环境冒烟）", { skip: skipNonWin("依赖真实磁盘与 PowerShell") }, () => {
   const r = spawnSync("node", [CLI, "status"], { encoding: "utf8", timeout: 60000 });
   assert.equal(r.status, 0, `stderr: ${r.stderr}`);
   assert.equal(r.stdout.includes("AgentDiskGuard 状态"), true);

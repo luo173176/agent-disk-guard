@@ -35,5 +35,13 @@ function buildSessionNotice(options = {}) {
             `会写 C 盘缓存的命令必须显式带缓存参数（npm --cache "${policy.redirectRoot}\\npm-cache"、` +
             `pip --cache-dir "${policy.redirectRoot}\\pip"），否则会被拒绝。缓存根：${policy.redirectRoot}。`);
     }
+    // 策略文件解析失败时，明确告知「已回退默认策略」，避免用户以为自定义策略已生效。
+    // 仅在 buildSessionNotice 自己加载了策略时判断（options.policy 由调用方给定时不重复读盘）。
+    if (!options.policy) {
+        const perr = (0, policy_1.getLastPolicyError)();
+        if (perr) {
+            lines.push(`AgentDiskGuard 警告：策略文件解析失败，已回退默认策略（${perr.file}）。请检查 YAML 语法后重试。`);
+        }
+    }
     return lines;
 }

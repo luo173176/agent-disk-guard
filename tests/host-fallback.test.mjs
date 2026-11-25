@@ -50,6 +50,11 @@ const policyWith = (over) => ({ ...defaultPolicy(), ...over });
  */
 const UNWRITABLE_ROOT = path.join(import.meta.filename, "adg-cache");
 
+// 「写受保护目录」用例把 user home 当作受保护目录来源：仅当 home 在受保护盘（Windows CI 的 C:）成立，
+// 非 Windows（home 在 /home 等）无法复现，按平台条件跳过并注明。
+const isWin = process.platform === "win32";
+const skipNonWin = (why) => (isWin ? false : `非 Windows 环境跳过：${why}`);
+
 test("DSH 环境被识别为不采纳 updatedInput 的宿主", () => {
   withEnv({ DSH_SESSION_ID: "s1" }, () => {
     const host = detectHost();
@@ -96,7 +101,7 @@ test("采纳改写的宿主：npm install 仍走 updatedInput（原有行为不�
   assert.equal(d.updatedInput.command, 'npm install lodash --cache "D:\\AgentCache\\npm-cache"');
 });
 
-test("不采纳改写的宿主：写受保护目录降级为拒绝并给出目标路径", () => {
+test("不采纳改写的宿主：写受保护目录降级为拒绝并给出目标路径", { skip: skipNonWin("依赖用户主目录在受保护盘") }, () => {
   const home = process.env.USERPROFILE || process.env.HOME;
   const target = path.join(home, "AppData", "Local", "npm-cache", "x.txt");
   const p = policyWith({ hostCapabilities: "noUpdatedInput", fileWriteMode: "redirect", redirectRoot: "D:\\AgentCache" });

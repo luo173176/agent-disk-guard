@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.getLastPolicyError = getLastPolicyError;
 exports.parseYamlSubset = parseYamlSubset;
 exports.defaultPolicyObject = defaultPolicyObject;
 exports.defaultPolicy = defaultPolicy;
@@ -47,11 +48,19 @@ exports.loadPolicy = loadPolicy;
  *   2. %USERPROFILE%\.agent-disk-guard\policy.yaml（install.ps1 生成，用户可编辑）
  *   3. 插件自带 config/policy.yaml（只读兜底）
  *   4. 内置默认值
+ *
+ * 注意：只覆盖 YAML 子集——支持映射/列表/标量/注释/流程列表，不支持流程映射（`{a: b}`）
+ * 与多行块标量（`|` / `>`）；请用块式写法，字符串里的反斜杠/引号在双引号内转义。
  */
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const util_1 = require("./util");
 const logger_1 = require("./logger");
+let lastPolicyError = null;
+/** 读取最近一次 loadPolicy 的解析失败信息（无失败返回 null）。 */
+function getLastPolicyError() {
+    return lastPolicyError;
+}
 /** 去掉注释（引号外的 #）、空行；返回带缩进结构的行。 */
 function preprocess(text) {
     const out = [];
@@ -346,6 +355,7 @@ function resolvePolicyFilePath() {
  * 解析失败时告警并回退内置默认（fail-open，不阻断 Agent）。
  */
 function loadPolicy() {
+    lastPolicyError = null;
     const file = resolvePolicyFilePath();
     if (file) {
         try {
@@ -355,6 +365,7 @@ function loadPolicy() {
             }
         }
         catch (e) {
+            lastPolicyError = { file, error: String(e) };
             (0, logger_1.logWarn)(`policy 解析失败，使用内置默认策略: ${file}`, { error: String(e) });
         }
     }

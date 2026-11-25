@@ -183,7 +183,7 @@ monitor:
 - **Junction 自动放行**：目录一旦迁移成 Junction（数据实际已在 D 盘），守卫检测到 reparse point 后不再拦截，用户不会被锁死；
 - **mirror 模式**：没有 `redirect` 名的受保护路径，重定向到 `<根>\mirror\home\<相对用户主目录>`；
 - **C 盘根散文件**（`C:\foo.txt`）也拦，防止 Agent 往盘根塞垃圾；
-- **宿主能力**：`hostCapabilities: auto` 默认按环境变量探测（`DSH_*` 任一，或 `ELECTRON_RUN_AS_NODE=1`）。不采纳改写入参的宿主上，`redirect` / `rewrite` 会转成 `deny` 并在理由里给出改写后的命令——把 `updatedInput` 交给这种宿主只会被桥接丢弃，原命令照跑；
+- **宿主能力**：`hostCapabilities: auto` 默认按环境变量探测（`DSH_*` 任一，或 `ELECTRON_RUN_AS_NODE=1`）。不采纳改写入参的宿主上，`redirect` / `rewrite` 会转成 `deny` 并在理由里给出改写后的命令——把 `updatedInput` 交给这种宿主只会被桥接丢弃，原命令照跑；探测被误判时（如非 DSH 进程里残留 `ELECTRON_RUN_AS_NODE=1`）可用 `hostCapabilities: updatedInput` / `noUpdatedInput` 强制覆盖；
 - **回退根**：`redirectRootFallback: true`（默认）下，不采纳改写的宿主直接采用 `<会话工作区>\.agent-cache`（该路径由模型执行，hook 侧探测不到模型的沙箱范围），采纳改写的宿主才按 `redirectRoot` 的可写性回退；`agent-disk-guard doctor` 会显示探测到的宿主与实际使用的根。
 - **会话启动提示**：`monitor.sessionStartCheck` 控制空间告警，宿主运行态提示与它无关、始终注入；文本由 `src/notice.ts` 统一生成，Claude Code / ZCode / DSH 三条宿主通路共用同一份。
 
@@ -286,7 +286,7 @@ export const DiskGuard = async ({ project, client, $ }) => {
 
 ```powershell
 npm install && npm run build
-npm test        # 48 个用例：策略解析 / 路径守卫 / 命令改写 / 决策引擎 / hook 端到端 / 监控分级 / 迁移安全
+npm test        # 107 个用例：策略解析 / 路径守卫 / 命令改写 / 决策引擎 / hook 端到端 / 监控分级 / 迁移安全 / v0.3.6 回归（命令写保护 / 跨平台判定 / npm 子命令 / 策略失败告警）
 ```
 
 覆盖验收场景：
@@ -300,7 +300,8 @@ npm test        # 48 个用例：策略解析 / 路径守卫 / 命令改写 / �
 - `docker pull` 的镜像层存在 Docker Desktop 的 WSL2 vhdx 里，环境变量只能改客户端配置；瘦身请用 Docker Desktop 自带的 disk image 位置设置；
 - Hook 无法替子进程设置环境变量（那是 `install.ps1`/`env --set`/`exec` 包装器的职责），所以 Hook 只注入命令行参数；
 - `npx`/`pnpm`/`cargo`/`go`/`gradle` 等没有可靠的缓存命令行参数，依赖环境变量（Hook 检测到未注入时会在 reason 里提示）；
-- 本工具面向 Windows（C/D 盘、junction、robocopy）；WSL/macOS/Linux 侧拦截不在范围内。
+- 本工具面向 Windows（C/D 盘、junction、robocopy）；路径判定已按 `path.win32` 语义做成平台无关，可在非 Windows 上跑纯字符串判定与 CI，但真实 junction/8.3 短名/盘空间探测与最终拦截落地仍面向 Windows；
+- 命令通道写保护：拦截 `>` / `>>` 重定向目标与 `Out-File`/`Set-Content`/`Add-Content`/`Copy-Item`/`Move-Item`/`tee` 等写动词的**路径字面量**；对动态拼接、脚本内部（如 python `open(...)`）或经变量/编码间接构造的路径不做识别（rewrite 模式下对已识别的字面量降级为拒绝并给建议路径）。
 
 ## License
 
