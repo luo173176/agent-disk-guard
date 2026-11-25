@@ -82,7 +82,9 @@ function readEntries() {
  * 备份是否还在，由调用方按 backupPath 自行探测。
  */
 function latestStateFor(source) {
-    const key = source.toLowerCase();
-    const hits = readEntries().filter((e) => e.source.toLowerCase() === key && e.op !== "purge-backup");
+    // 两侧都做盘符语义归一化再比较：调用方（rollback/purge）传的是 normalizePath 后的盘符形式，
+    // 而条目可能以原始路径（如 POSIX 的 /tmp/...）写入；不归一化会在非 Windows 上永远匹配不到。
+    const key = (0, util_1.normalizePath)(source).toLowerCase();
+    const hits = readEntries().filter((e) => (0, util_1.normalizePath)(e.source).toLowerCase() === key && e.op !== "purge-backup");
     return hits[hits.length - 1];
 }

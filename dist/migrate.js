@@ -100,18 +100,20 @@ function planMigration(source, policy, withSize = true) {
     if (!/^[A-Za-z]:\\/.test(src)) {
         return { ok: false, message: `仅支持 Windows 绝对路径，收到: ${source}` };
     }
-    if (!fs.existsSync(src))
-        return { ok: false, message: `源目录不存在: ${src}` };
-    if (!fs.statSync(src).isDirectory())
-        return { ok: false, message: `源不是目录: ${src}` };
-    if ((0, pathguard_1.isReparsePoint)(src))
-        return { ok: false, message: `源已是 Junction/链接，无需迁移（数据实际在别处）: ${src}` };
+    // 先判「受保护盘 + 系统黑名单」再判存在性：目标是否出现在宿主上不影响策略结论，
+    // 否则在非 Windows 上 C:\Windows 不存在会被误报为「源目录不存在」而不是「拒绝迁移」。
     if (src[0].toUpperCase() !== (0, util_1.driveLetter)(policy.protectedDrive)) {
         return { ok: false, message: `源目录不在受保护盘 ${policy.protectedDrive}: 上: ${src}` };
     }
     const forb = isForbiddenForMigration(src);
     if (forb)
         return { ok: false, message: `拒绝迁移系统/基础目录: ${forb}` };
+    if (!fs.existsSync(src))
+        return { ok: false, message: `源目录不存在: ${src}` };
+    if (!fs.statSync(src).isDirectory())
+        return { ok: false, message: `源不是目录: ${src}` };
+    if ((0, pathguard_1.isReparsePoint)(src))
+        return { ok: false, message: `源已是 Junction/链接，无需迁移（数据实际在别处）: ${src}` };
     const root = (0, util_1.normalizePath)(policy.redirectRoot);
     if (root[0].toUpperCase() === (0, util_1.driveLetter)(policy.protectedDrive)) {
         return { ok: false, message: `redirectRoot 必须在非 ${policy.protectedDrive}: 盘上（当前: ${root}）` };
